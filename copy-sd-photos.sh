@@ -13,7 +13,7 @@ print_help() {
   echo "  --dry-run        Show what would be copied, without changing anything"
   echo "  --help, -h       Show this help message"
   echo
-  echo "Copies image files to the current directory in YYYY-MM-DD subfolders,"
+  echo "Copies image files to the current directory in YYYY/YYYY-MM-DD subfolders,"
   echo "using macOS filesystem creation dates. Existing files are not overwritten."
 }
 
@@ -55,7 +55,7 @@ while IFS= read -r -d '' file; do
     echo "Skipping (no creation date): $file"
     continue
   fi
-  target_dir="$DEST/$date"
+  target_dir="$DEST/${date:0:4}/$date"
   filename=$(basename "$file")
   dest_file="$target_dir/$filename"
 

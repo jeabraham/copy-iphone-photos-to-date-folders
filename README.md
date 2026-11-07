@@ -175,8 +175,14 @@ describes transferring media from connected devices.
 ## SD-card copier (macOS)
 
 This preserves the supplied memory-card workflow: images only, filesystem
-creation dates, `YYYY-MM-DD` folders in the **current directory**, and no overwrite.
+creation dates, `YYYY/YYYY-MM-DD` folders in the **current directory**, and no overwrite.
+It remains a standalone shell script and does not use the iPhone SQLite inventory.
 Its default source is `/Volumes/NIKON Z 5  /DCIM/102NCZ_5`.
+
+Existing files are skipped by filename within the target date folder. Previously
+imported top-level `YYYY-MM-DD` folders are not moved, renamed, or deleted. Because
+those legacy folders are not checked, importing the same card again may create
+another copy under the new year/date layout.
 
 ```sh
 # Run from the desired destination directory, using the script's actual path.
