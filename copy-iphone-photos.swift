@@ -122,6 +122,9 @@ final class Importer: NSObject, ICDeviceBrowserDelegate, ICCameraDeviceDelegate 
     var transfer: Progress?
     var watchdog: Timer?
     var progressTimer: Timer?
+    var openRetry: Timer?
+    var openingSession = false
+    var accessDeadline: Date?
     var catalogReady = false
     var finished = false
     var failures = 0
@@ -154,6 +157,7 @@ final class Importer: NSObject, ICDeviceBrowserDelegate, ICCameraDeviceDelegate 
         finished = true
         watchdog?.invalidate()
         progressTimer?.invalidate()
+        openRetry?.invalidate()
         transfer?.cancel()
         browser.stop()
         camera?.requestCloseSession()
@@ -168,6 +172,17 @@ final class Importer: NSObject, ICDeviceBrowserDelegate, ICCameraDeviceDelegate 
         camera.delegate = self
         print("Opening \(camera.name ?? "camera")…")
         resetWatchdog()
+        openCameraSession()
+    }
+
+    func openCameraSession() {
+        guard !finished, !openingSession, let camera = camera,
+              !camera.hasOpenSession else { return }
+        if let deadline = accessDeadline, Date() >= deadline {
+            fail("Timed out waiting for iPhone media access. If the phone is already unlocked, quit Image Capture/Photos, reconnect, and check this tool's macOS permissions.")
+            return
+        }
+        openingSession = true
         camera.requestOpenSession()
     }
 
@@ -176,8 +191,30 @@ final class Importer: NSObject, ICDeviceBrowserDelegate, ICCameraDeviceDelegate 
     }
 
     func device(_ device: ICDevice, didOpenSessionWithError error: Error?) {
-        if let error = error { fail("Cannot open device: \(error.localizedDescription)") }
-        else { resetWatchdog() }
+        guard device === camera, !finished else { return }
+        openingSession = false
+        guard let error = error else {
+            openRetry?.invalidate()
+            openRetry = nil
+            accessDeadline = nil
+            resetWatchdog()
+            return
+        }
+        let details = error as NSError
+        let description = "\(details.domain) \(details.code): \(details.localizedDescription)"
+        guard details.domain == ICErrorDomain,
+              details.code == ICReturn.deviceIsPasscodeLocked.rawValue else {
+            fail("Cannot open device: \(description)")
+            return
+        }
+        if accessDeadline == nil {
+            accessDeadline = Date(timeIntervalSinceNow: options.timeout)
+            print("ImageCaptureCore reports restricted media access (\(description)). Waiting and retrying; this does not necessarily mean the screen is locked. Quit other importing apps and check macOS permissions if already unlocked.")
+        }
+        openRetry?.invalidate()
+        openRetry = Timer.scheduledTimer(withTimeInterval: 2, repeats: false) { [weak self] _ in
+            self?.openCameraSession()
+        }
     }
 
     func device(_ device: ICDevice, didCloseSessionWithError error: Error?) {}
@@ -195,14 +232,20 @@ final class Importer: NSObject, ICDeviceBrowserDelegate, ICCameraDeviceDelegate 
                       for item: ICCameraItem, error: Error?) {}
     func cameraDevice(_ camera: ICCameraDevice, didReceivePTPEvent eventData: Data) {}
     func cameraDeviceDidChangeCapability(_ camera: ICCameraDevice) {}
-    func cameraDeviceDidRemoveAccessRestriction(_ device: ICDevice) { resetWatchdog() }
-    func cameraDeviceDidEnableAccessRestriction(_ device: ICDevice) {
-        print("Unlock the iPhone and accept Trust This Computer.")
+    func cameraDeviceDidRemoveAccessRestriction(_ device: ICDevice) {
+        guard device === camera, !finished else { return }
+        openRetry?.invalidate()
+        openRetry = nil
         resetWatchdog()
+        openCameraSession()
+    }
+    func cameraDeviceDidEnableAccessRestriction(_ device: ICDevice) {
+        guard device === camera, !finished else { return }
+        print("iPhone media access is restricted. Waiting for access; unlock/trust the phone if needed.")
     }
 
     func deviceDidBecomeReady(withCompleteContentCatalog device: ICCameraDevice) {
-        guard !finished, !catalogReady else { return }
+        guard !finished, !catalogReady, !device.isAccessRestrictedAppleDevice else { return }
         catalogReady = true
         do {
             for file in (device.mediaFiles ?? []).compactMap({ $0 as? ICCameraFile }) {

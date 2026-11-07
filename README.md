@@ -65,6 +65,28 @@ enumeration, and stalled transfers time out after 120 idle seconds. Increase
 `--timeout 600` for a large library or slow phone. Errors produce a nonzero exit
 status; check the final copied/skipped/error counts and messages.
 
+### “Please unlock” even though the phone is unlocked
+
+ImageCaptureCore can report restricted media access independently of the screen's
+visible lock state. Image Capture working does not establish that this script's
+session can access the phone. The importer retries only the framework's
+passcode-locked/access-restricted session error every two seconds, for at most
+`--timeout` seconds. It also retries when the framework reports restrictions
+removed. Other session errors still fail immediately, with their domain and code.
+It does not bypass trust or permissions, and this recovery is not a verified fix
+for any particular macOS/iOS release.
+
+Quit Image Capture, Photos, Lightroom, and other importing apps; reconnect the
+phone while unlocked and keep it awake. Accept any access prompts for the
+terminal/tool running the script, and review its available permissions in
+System Settings → Privacy & Security. If it still fails, include the reported
+error domain/code and whether Image Capture can list photos after a reconnect.
+Increasing `--timeout` gives access recovery more time, but cannot grant access.
+
+Inside a quoted destination path, spaces must **not** be escaped with backslashes:
+use `--dest "/Volumes/Photo Archive/My Photos"`, not
+`--dest "/Volumes/Photo\ Archive/My\ Photos"`.
+
 ### iCloud / optimized storage limitation
 
 **USB access cannot force-download an iCloud-only original.** ImageCaptureCore
