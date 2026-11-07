@@ -224,6 +224,12 @@ copied (photo, video, RAW alternate, Live Photo video), not edited renders, and
 `--adopt-existing` works by matching filename, date and byte size against files
 already in the destination (e.g. from an earlier Image Capture import).
 
+**Other apps can grab the phone.** Lightroom Classic (its import dialog),
+Photos, Image Capture and similar apps claim the phone when it is plugged in and
+can block both the importer and Xcode installs (for example CoreDevice error
+4016, "not able to fulfill the requested usage assertion requirements"). Quit
+them, or disable their "open when a device is connected" behavior, then replug.
+
 Limitations of this first version: one phone at a time, no on-screen progress
 beyond a log, and no extra authentication beyond loopback-only access. Test with
 a small date range first.
