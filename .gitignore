@@ -1,4 +1,8 @@
 # Byte-compiled / optimized / DLL files
+.iphone-import.sqlite3*
+.iphone-import.lock
+.iphone-import-*/
+
 __pycache__/
 *.py[codz]
 *$py.class
