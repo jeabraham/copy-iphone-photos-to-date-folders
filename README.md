@@ -165,12 +165,67 @@ run the importer again. This phone-side download does not require syncing photos
 to the Mac; the script itself cannot automate or verify it. **Keep Originals**
 under Transfer to Mac or PC controls conversion, not iCloud downloading.
 
+#### Diagnosing offloaded photos without downloading everything
+
+With **Optimize iPhone Storage** on, iOS keeps full-resolution originals for
+recent or frequently viewed photos and may keep only smaller device copies of
+older ones. Image Capture (and this script) can still *list* many older items,
+so being listed does not prove the original is on the phone. This behavior is
+based on observation, not an Apple guarantee; treat it as unverified for your
+iOS version. To check a date range:
+
+1. Run with `--dry-run` for the range and note the item count.
+2. Compare it with the iPhone Photos app (or iCloud.com) count for the same
+   range. Missing items suggest they were not exposed over USB.
+3. After a real run, spot-check imported files: unexpectedly small file sizes
+   or dimensions, download errors, or timeouts point to non-original copies or
+   failed iCloud fetches. Check Settings → Photos for **Optimize iPhone Storage**
+   and Settings → General → iPhone Storage → Photos for how much is offloaded.
+4. Re-run after fixing the cause; the inventory prevents re-copying recorded files.
+
+To avoid problems without keeping all of history on the phone, work by range:
+on Wi-Fi and power, open the needed photos in the iPhone Photos app and let any
+"Downloading from iCloud" indicators finish before importing, import small
+ranges at a time, and keep older ranges in a separate iCloud/Mac export.
+Recent photos are usually the least affected.
+
 If the originals cannot fit on the phone, use a separate iCloud export workflow
 (for example, iCloud.com downloads or a Mac Photos library with originals
 downloaded, followed by Photos Takeout). Compare against the expected library
 contents; do not treat the USB catalog as an authoritative cloud inventory.
 Apple's [Image Capture guide](https://support.apple.com/guide/image-capture/transfer-images-imgcp1003/mac)
 describes transferring media from connected devices.
+
+## USB companion app (handles Optimize iPhone Storage)
+
+`ios-companion/` contains a small SwiftUI app that uses PhotoKit to fetch
+originals, **including iCloud-offloaded ones**, and stream them to the Mac over
+the USB cable. No Wi-Fi share is needed. The Mac script reaches the app through
+`usbmuxd` (the same channel Xcode uses); the app listens on the phone's loopback
+interface only (port 58214), so it is not reachable from the network.
+
+1. Open `ios-companion/PhotoImportCompanion.xcodeproj` in Xcode, set your Team
+   and a unique bundle identifier under Signing & Capabilities, and run it on the
+   iPhone.
+2. Allow **Full Access** to Photos. Keep the app open in the foreground and the
+   phone unlocked, on Wi-Fi and power (iCloud downloads need a network).
+3. Connect the phone by USB, trust the Mac, then run:
+
+```sh
+swift copy-iphone-photos.swift --companion --dest "/Volumes/Photo Archive" \
+  --from 2026-10-01 --to 2026-10-31 --dry-run
+```
+
+Drop `--dry-run` to copy. The destination layout, SQLite inventory, no-overwrite
+rule, `--exclude-movies` and `--overwrite` behave as in the Image Capture mode,
+and re-running resumes safely. Files that fail (for example, an iCloud download
+error) are reported and retried on the next run. Only original resources are
+copied (photo, video, RAW alternate, Live Photo video), not edited renders, and
+`--adopt-existing` does not apply because the app reports no file sizes.
+
+Limitations of this first version: one phone at a time, no on-screen progress
+beyond a log, and no extra authentication beyond loopback-only access. Test with
+a small date range first.
 
 ## SD-card copier (macOS)
 

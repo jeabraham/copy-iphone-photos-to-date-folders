@@ -31,6 +31,8 @@ struct Options {
     var deviceName: String?
     var deviceID: String?
     var timeout: TimeInterval = 120
+    var companion = false
+    var port: UInt16 = 58214
 
     static func dateFormatter() -> DateFormatter {
         let formatter = DateFormatter()
@@ -52,7 +54,8 @@ struct Options {
             case "--overwrite": options.overwrite = true
             case "--adopt-existing": options.adoptExisting = true
             case "--dry-run": options.dryRun = true
-            case "--dest", "--from", "--to", "--device", "--device-id", "--timeout":
+            case "--companion": options.companion = true
+            case "--dest", "--from", "--to", "--device", "--device-id", "--timeout", "--port":
                 index += 1
                 guard index < arguments.count, !arguments[index].hasPrefix("--"),
                       !arguments[index].isEmpty else {
@@ -63,6 +66,11 @@ struct Options {
                 case "--dest": options.destination = URL(fileURLWithPath: value).standardizedFileURL
                 case "--device": options.deviceName = value
                 case "--device-id": options.deviceID = value
+                case "--port":
+                    guard let port = UInt16(value), port > 1023 else {
+                        throw ImportError(message: "--port must be a number from 1024 to 65535")
+                    }
+                    options.port = port
                 case "--timeout":
                     guard let seconds = Double(value), seconds.isFinite, seconds > 0 else {
                         throw ImportError(message: "--timeout must be a positive number of seconds")
@@ -375,6 +383,8 @@ Usage: swift copy-iphone-photos.swift [options]
   --dry-run           List planned copies without downloading or writing files
   --device NAME       Exact device name (otherwise use the first camera found)
   --device-id ID      Stable device identity override (required if no serial number)
+  --companion         Pull originals over USB from the iOS companion app instead of Image Capture
+  --port N            Companion app TCP port (default: 58214)
   --timeout SECONDS   Maximum idle wait for discovery/catalog/download (default: 120)
   --help, -h          Show this help
 
@@ -673,6 +683,291 @@ final class Importer: NSObject, ICDeviceBrowserDelegate, ICCameraDeviceDelegate 
         return failures == 0 ? 0 : 1
     }
 }
+
+// Blocking socket with frames [UInt32 BE length][UInt8 kind][payload]; kind 0 = JSON, 1 = file data.
+final class CompanionChannel {
+    let descriptor: Int32
+
+    init(descriptor: Int32, timeout: TimeInterval) {
+        self.descriptor = descriptor
+        var value = timeval(tv_sec: Int(timeout), tv_usec: 0)
+        setsockopt(descriptor, SOL_SOCKET, SO_RCVTIMEO, &value, socklen_t(MemoryLayout<timeval>.size))
+        setsockopt(descriptor, SOL_SOCKET, SO_SNDTIMEO, &value, socklen_t(MemoryLayout<timeval>.size))
+        var on: Int32 = 1
+        setsockopt(descriptor, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size))
+    }
+
+    deinit { close(descriptor) }
+
+    static func unixSocket(path: String, timeout: TimeInterval) throws -> CompanionChannel {
+        let descriptor = socket(AF_UNIX, SOCK_STREAM, 0)
+        guard descriptor >= 0 else { throw ImportError(message: "Cannot create socket") }
+        var address = sockaddr_un()
+        address.sun_family = sa_family_t(AF_UNIX)
+        let bytes = path.utf8CString
+        guard bytes.count <= MemoryLayout.size(ofValue: address.sun_path) else {
+            close(descriptor)
+            throw ImportError(message: "usbmuxd socket path is too long: \(path)")
+        }
+        withUnsafeMutableBytes(of: &address.sun_path) { buffer in
+            bytes.withUnsafeBytes { buffer.copyMemory(from: $0) }
+        }
+        let result = withUnsafePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                connect(descriptor, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
+            }
+        }
+        guard result == 0 else {
+            close(descriptor)
+            throw ImportError(message: "Cannot reach usbmuxd at \(path): \(String(cString: strerror(errno)))")
+        }
+        return CompanionChannel(descriptor: descriptor, timeout: timeout)
+    }
+
+    func writeAll(_ data: Data) throws {
+        try data.withUnsafeBytes { buffer in
+            var offset = 0
+            while offset < buffer.count {
+                let written = send(descriptor, buffer.baseAddress! + offset, buffer.count - offset, 0)
+                if written < 0 && errno == EINTR { continue }
+                guard written > 0 else { throw ImportError(message: "Connection to the iPhone closed while sending") }
+                offset += written
+            }
+        }
+    }
+
+    func readExactly(_ count: Int) throws -> Data {
+        var data = Data(count: count)
+        var offset = 0
+        try data.withUnsafeMutableBytes { buffer in
+            while offset < count {
+                let received = recv(descriptor, buffer.baseAddress! + offset, count - offset, 0)
+                if received < 0 && errno == EINTR { continue }
+                if received < 0 && (errno == EAGAIN || errno == EWOULDBLOCK) {
+                    throw ImportError(message: "Timed out waiting for the iPhone. Keep the companion app open and unlocked, or raise --timeout.")
+                }
+                guard received > 0 else { throw ImportError(message: "Connection to the iPhone closed. Is the companion app still in the foreground?") }
+                offset += received
+            }
+        }
+        return data
+    }
+
+    func sendJSON(_ object: [String: Any]) throws {
+        let payload = try JSONSerialization.data(withJSONObject: object)
+        var frame = Data()
+        withUnsafeBytes(of: UInt32(payload.count).bigEndian) { frame.append(contentsOf: $0) }
+        frame.append(0)
+        frame.append(payload)
+        try writeAll(frame)
+    }
+
+    func readFrame() throws -> (kind: UInt8, payload: Data) {
+        let header = try readExactly(5)
+        let length = Int(header.prefix(4).reduce(UInt32(0)) { $0 << 8 | UInt32($1) })
+        guard length <= 64 * 1024 * 1024 else { throw ImportError(message: "Oversized frame from the iPhone") }
+        return (header[4], try readExactly(length))
+    }
+
+    func readJSON() throws -> [String: Any] {
+        let frame = try readFrame()
+        guard frame.kind == 0, let object = try JSONSerialization.jsonObject(with: frame.payload) as? [String: Any] else {
+            throw ImportError(message: "Unexpected response from the iPhone")
+        }
+        return object
+    }
+}
+
+// Talks to usbmuxd (the macOS USB multiplexer) to open a TCP stream to the phone's loopback port.
+enum USBMux {
+    // Honors the libimobiledevice-style override, e.g. USBMUXD_SOCKET_ADDRESS=UNIX:/tmp/usbmuxd.
+    static var socketPath: String {
+        if let override = ProcessInfo.processInfo.environment["USBMUXD_SOCKET_ADDRESS"],
+           override.hasPrefix("UNIX:") { return String(override.dropFirst(5)) }
+        return "/var/run/usbmuxd"
+    }
+
+    static func request(_ channel: CompanionChannel, _ message: [String: Any]) throws -> [String: Any] {
+        var body = message
+        body["ClientVersionString"] = "copy-iphone-photos"
+        body["ProgName"] = "copy-iphone-photos"
+        let plist = try PropertyListSerialization.data(fromPropertyList: body, format: .xml, options: 0)
+        var packet = Data()
+        for value in [UInt32(16 + plist.count), 1, 8, 1] {
+            withUnsafeBytes(of: value.littleEndian) { packet.append(contentsOf: $0) }
+        }
+        packet.append(plist)
+        try channel.writeAll(packet)
+        let header = try channel.readExactly(16)
+        let length = Int(header.prefix(4).enumerated().reduce(UInt32(0)) { $0 | UInt32($1.element) << (8 * UInt32($1.offset)) })
+        guard length >= 16, length < 16 * 1024 * 1024 else { throw ImportError(message: "Invalid usbmuxd response") }
+        let response = try channel.readExactly(length - 16)
+        guard let result = try PropertyListSerialization.propertyList(from: response, format: nil) as? [String: Any] else {
+            throw ImportError(message: "Invalid usbmuxd response")
+        }
+        return result
+    }
+
+    static func usbDevice(timeout: TimeInterval) throws -> (id: Int, serial: String) {
+        let channel = try CompanionChannel.unixSocket(path: socketPath, timeout: timeout)
+        let response = try request(channel, ["MessageType": "ListDevices"])
+        let devices = (response["DeviceList"] as? [[String: Any]] ?? []).compactMap { entry -> (Int, String)? in
+            guard let properties = entry["Properties"] as? [String: Any],
+                  properties["ConnectionType"] as? String == "USB",
+                  let id = (properties["DeviceID"] as? NSNumber)?.intValue,
+                  let serial = properties["SerialNumber"] as? String else { return nil }
+            return (id, serial)
+        }
+        guard devices.count == 1 else {
+            throw ImportError(message: devices.isEmpty
+                ? "No USB-connected iPhone found. Connect it, unlock it, and tap Trust."
+                : "Several USB devices are connected; connect only one iPhone.")
+        }
+        return (devices[0].0, devices[0].1)
+    }
+
+    static func connect(deviceID: Int, port: UInt16, timeout: TimeInterval) throws -> CompanionChannel {
+        let channel = try CompanionChannel.unixSocket(path: socketPath, timeout: timeout)
+        let response = try request(channel, ["MessageType": "Connect", "DeviceID": deviceID,
+                                             "PortNumber": Int(port.bigEndian)])
+        let code = (response["Number"] as? NSNumber)?.intValue ?? -1
+        switch code {
+        case 0: return channel
+        case 3: throw ImportError(message: "The companion app is not listening on port \(port). Open it on the iPhone and keep it in the foreground.")
+        default: throw ImportError(message: "usbmuxd could not connect to the iPhone (code \(code)). Unlock it and trust this Mac.")
+        }
+    }
+}
+
+final class CompanionImporter {
+    let options: Options
+    var copied = 0
+    var skipped = 0
+    var failures = 0
+
+    init(options: Options) { self.options = options }
+
+    func run() -> Int32 {
+        do {
+            let device = try USBMux.usbDevice(timeout: options.timeout)
+            let channel = try USBMux.connect(deviceID: device.id, port: options.port, timeout: options.timeout)
+            try channel.sendJSON(["op": "hello"])
+            let hello = try channel.readJSON()
+            guard hello["ok"] as? Bool == true else { throw ImportError(message: "Companion app refused the connection") }
+            if hello["authorized"] as? Bool != true {
+                throw ImportError(message: "Grant the companion app full Photos access (Settings → Photos), then rerun.")
+            }
+            let name = hello["name"] as? String ?? "iPhone"
+            print("Connected to \(name) over USB.")
+            let identity = options.deviceID.map { "manual:\($0)" } ?? "companion:\(device.serial)"
+            var request: [String: Any] = ["op": "list", "excludeMovies": options.excludeMovies]
+            if let start = options.start { request["from"] = start.timeIntervalSince1970 }
+            if let end = options.end { request["to"] = end.timeIntervalSince1970 }
+            try channel.sendJSON(request)
+            let list = try channel.readJSON()
+            guard list["ok"] as? Bool == true, let assets = list["assets"] as? [[String: Any]] else {
+                throw ImportError(message: list["error"] as? String ?? "Could not list photos")
+            }
+            let inventory = try PhotoInventory(destination: options.destination, readOnly: options.dryRun)
+            let planner = try PhotoPlanner(options: options, records: inventory.records())
+            var pending: [(asset: String, type: String, name: String, date: Date, plan: PhotoPlan)] = []
+            for asset in assets {
+                guard let id = asset["id"] as? String, let seconds = asset["date"] as? Double,
+                      let resources = asset["resources"] as? [[String: Any]] else { continue }
+                let date = Date(timeIntervalSince1970: seconds)
+                for resource in resources {
+                    guard let type = resource["type"] as? String, let file = resource["name"] as? String else { continue }
+                    let sourcePath = String(decoding: try JSONEncoder().encode(["companion", id, type, file]), as: UTF8.self)
+                    let plan = try planner.plan(deviceID: identity, sourcePath: sourcePath, name: file, date: date)
+                    if plan.skip {
+                        print("Skipping (already imported from this device): \(plan.target.path)")
+                        skipped += 1
+                    } else {
+                        pending.append((id, type, file, date, plan))
+                    }
+                }
+            }
+            pending.sort { $0.plan.target.path < $1.plan.target.path }
+            print("Selected \(pending.count) files.")
+            for item in pending {
+                if options.dryRun {
+                    print("[DRY RUN] Would copy: \(item.plan.target.path)")
+                    continue
+                }
+                do {
+                    try fetch(item, channel: channel, inventory: inventory, deviceName: name)
+                } catch let error as ImportError where error.message.hasPrefix("Fetch failed") {
+                    failures += 1
+                    fputs("\(error.message)\n", stderr)
+                }
+            }
+        } catch {
+            failures += 1
+            fputs("\(error.localizedDescription)\n", stderr)
+        }
+        print("Copied: \(copied); skipped: \(skipped); errors: \(failures)")
+        return failures == 0 ? 0 : 1
+    }
+
+    // Connection-level errors propagate and abort the run; per-asset failures are reported and skipped.
+    func fetch(_ item: (asset: String, type: String, name: String, date: Date, plan: PhotoPlan),
+               channel: CompanionChannel, inventory: PhotoInventory, deviceName: String) throws {
+        let manager = FileManager.default
+        let plan = item.plan
+        let target = plan.target
+        if manager.fileExists(atPath: target.path) && !plan.replace {
+            throw ImportError(message: "Fetch failed: target appeared after planning; refusing to overwrite it: \(target.path)")
+        }
+        try inventory.reserve(plan.record, deviceName: deviceName, originalName: item.name,
+                              date: item.date, sourceSize: 0, modified: nil)
+        let directory = target.deletingLastPathComponent()
+        let root = options.destination.resolvingSymlinksInPath().path
+        guard directory.resolvingSymlinksInPath().path.hasPrefix(root == "/" ? root : root + "/") else {
+            throw ImportError(message: "Destination date folder escapes --dest: \(directory.path)")
+        }
+        try manager.createDirectory(at: directory, withIntermediateDirectories: true)
+        let staging = directory.appendingPathComponent(".iphone-import-\(UUID().uuidString)", isDirectory: true)
+        try manager.createDirectory(at: staging, withIntermediateDirectories: false)
+        defer { try? manager.removeItem(at: staging) }
+        let partial = staging.appendingPathComponent(target.lastPathComponent)
+        guard manager.createFile(atPath: partial.path, contents: nil) else {
+            throw ImportError(message: "Cannot create \(partial.path)")
+        }
+        let handle = try FileHandle(forWritingTo: partial)
+        defer { try? handle.close() }
+        try channel.sendJSON(["op": "fetch", "id": item.asset, "type": item.type, "name": item.name])
+        var received: Int64 = 0
+        while true {
+            let frame = try channel.readFrame()
+            if frame.kind == 1 {
+                try handle.write(contentsOf: frame.payload)
+                received += Int64(frame.payload.count)
+                continue
+            }
+            guard let status = try JSONSerialization.jsonObject(with: frame.payload) as? [String: Any] else {
+                throw ImportError(message: "Unexpected response from the iPhone")
+            }
+            guard status["ok"] as? Bool == true else {
+                throw ImportError(message: "Fetch failed for \(item.name): \(status["error"] as? String ?? "unknown error")")
+            }
+            guard (status["bytes"] as? NSNumber)?.int64Value == received, received > 0 else {
+                throw ImportError(message: "Fetch failed for \(item.name): received \(received) bytes, expected a different size")
+            }
+            break
+        }
+        try handle.close()
+        if plan.replace {
+            guard rename(partial.path, target.path) == 0 else {
+                throw ImportError(message: "Cannot replace \(target.path): \(String(cString: strerror(errno)))")
+            }
+        } else {
+            try manager.moveItem(at: partial, to: target)
+        }
+        try inventory.complete(plan.record, size: received)
+        copied += 1
+        print("Copied: \(target.path)")
+    }
+}
 #endif
 
 do {
@@ -683,7 +978,7 @@ do {
     }
     let options = try Options.parse(arguments)
     #if os(macOS)
-    exit(Importer(options: options).run())
+    exit(options.companion ? CompanionImporter(options: options).run() : Importer(options: options).run())
     #else
     throw ImportError(message: "Direct iPhone import requires macOS 11 or later and ImageCaptureCore.")
     #endif
