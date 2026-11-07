@@ -278,6 +278,7 @@ final class PhotoPlanner {
     let options: Options
     private var known: [String: PhotoRecord] = [:]
     private var claimed: Set<String> = []
+    private var byPath: [String: PhotoRecord] = [:]
     private var planned: Set<String> = []
 
     init(options: Options, records: [PhotoRecord]) throws {
@@ -286,6 +287,7 @@ final class PhotoPlanner {
             _ = try target(for: record.relativePath)
             known[try key(deviceID: record.deviceID, assetID: record.assetID)] = record
             claimed.insert(PhotoInventory.pathKey(record.relativePath))
+            byPath[PhotoInventory.pathKey(record.relativePath)] = record
         }
     }
 
@@ -340,6 +342,11 @@ final class PhotoPlanner {
         let day = Options.dateFormatter().string(from: date)
         var relative = "\(day.prefix(4))/\(day)/\(name)"
         let base = try target(for: relative)
+        // Same phone, same file recorded by another source identity (e.g. Image Capture vs companion).
+        if options.adoptExisting, let owner = byPath[PhotoInventory.pathKey(relative)], owner.deviceID == deviceID,
+           owner.complete, sourceSize > 0, owner.savedSize == sourceSize, exists(base) {
+            return PhotoPlan(record: owner, target: base, skip: true, replace: false)
+        }
         if options.adoptExisting && !claimed.contains(PhotoInventory.pathKey(relative)) && exists(base) {
             let attributes = try FileManager.default.attributesOfItem(atPath: base.path)
             let size = (attributes[.size] as? NSNumber)?.int64Value ?? 0
@@ -847,6 +854,14 @@ final class CompanionImporter {
 
     init(options: Options) { self.options = options }
 
+    // Image Capture reports the UDID with one leading zero dropped from the part after the dash;
+    // matching it lets both modes recognize the same phone.
+    static func imageCaptureSerial(_ udid: String) -> String {
+        let parts = udid.split(separator: "-", maxSplits: 1).map(String.init)
+        guard parts.count == 2, parts[1].count == 16, parts[1].hasPrefix("0") else { return udid }
+        return "\(parts[0])-\(parts[1].dropFirst())"
+    }
+
     func run() -> Int32 {
         do {
             let device = try USBMux.usbDevice(timeout: options.timeout)
@@ -859,7 +874,7 @@ final class CompanionImporter {
             }
             let name = hello["name"] as? String ?? "iPhone"
             print("Connected to \(name) over USB.")
-            let identity = options.deviceID.map { "manual:\($0)" } ?? "companion:\(device.serial)"
+            let identity = options.deviceID.map { "manual:\($0)" } ?? "serial:\(Self.imageCaptureSerial(device.serial))"
             var request: [String: Any] = ["op": "list", "excludeMovies": options.excludeMovies]
             if let start = options.start { request["from"] = start.timeIntervalSince1970 }
             if let end = options.end { request["to"] = end.timeIntervalSince1970 }
@@ -887,7 +902,7 @@ final class CompanionImporter {
                         print("\(options.dryRun ? "[DRY RUN] Would adopt" : "Adopted") existing file for this device: \(plan.target.path)")
                     }
                     if plan.skip {
-                        print("Skipping (already imported from this device): \(plan.target.path)")
+                        if !plan.adopt { print("Skipping (already imported from this device): \(plan.target.path)") }
                         skipped += 1
                     } else {
                         pending.append((id, type, file, date, plan))
