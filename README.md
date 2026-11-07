@@ -44,20 +44,84 @@ Videos are included by default. `--exclude-movies` also excludes Live Photo vide
 companions; it keeps their still images. Non-image/video sidecars such as `.AAE`
 are not exported, so this is a media copy, not a restorable Photos-library backup.
 
-Existing destination files with the same filename and date folder are skipped
-**before downloading**, with no metadata database needed. This also recognizes
-files imported by another tool into the same layout. It is not content-based
-deduplication: two different assets/devices with the same date and filename
-collide, and changing filenames/dates can result in another copy. Use separate
-destinations for different phones when necessary. Existing partial files from
-other tools are also skipped; use `--overwrite` to repair them.
+### Shared folders and the local inventory
 
-`--overwrite` replaces every matching destination in the selected range, not
-just edited files. Edit detection is not automatic, and only the rendition
-exposed by iOS is copied; not every Photos edit is necessarily exposed over USB.
+Use the **same `--dest` for every phone**. The importer stores devices, original
+filenames, source paths, creation/modification dates, source sizes, and saved paths
+in `DEST/.iphone-import.sqlite3`, using macOS's built-in SQLite library.
+Device identity uses the serial number exposed by ImageCaptureCore, not the
+phone's display name or a session-specific PTP handle. If no serial is available,
+the importer asks for `--device-id`; supply a unique, permanent label and reuse it
+on every import from that phone. An explicit label overrides the serial, so
+switching identity schemes later causes the phone to be treated as a new device.
+Renaming a phone does not change its serial-based identity.
+
+A source file is identified by its device, full catalog path, and full creation
+timestamp, not just its filename and day. A successful recorded import is skipped
+**before downloading** if its saved file still exists with the recorded byte
+size. Missing files are reimported. Changed/unreadable saved files are reported;
+use `--overwrite` to refresh them. This is metadata-based deduplication, not
+content hashing: same-size external changes are not detected, and changing source
+names, catalog paths, creation dates, or transfer formats can result in new copies.
+Duplicate indistinguishable catalog entries are reported rather than silently merged.
+
+The first asset normally keeps `IMG_1234.HEIC`. A different asset or phone whose
+name clashes gets `IMG_1234__<device-token>.HEIC`, with an additional number if
+needed. All files still share the same `YYYY/YYYY-MM-DD` folders. The inventory
+remembers that assigned path so subsequent imports skip or overwrite the correct
+file. Names already reserved in the inventory are not reused for another asset,
+even when the file has been removed. Never delete the inventory merely to resolve
+a collision.
+
+`--overwrite` refreshes recorded assets belonging to the connected device in the
+selected range, not another phone's files or untracked files. It refreshes all
+selected recorded assets, not just edited ones. Edit detection is not automatic,
+and only the rendition exposed by iOS is copied; not every Photos edit is
+necessarily exposed over USB.
 Downloads are staged in the destination filesystem and successful overwrites
-are atomic. A failed transfer does not replace an existing photo. Dry runs
-still connect and enumerate the phone but do not create directories or download.
+are atomic. A failed transfer does not replace an existing photo. The inventory
+reserves the path before transfer and marks success only after the file is saved.
+An interrupted transfer is retried; a file left behind before success was recorded
+is preserved and a new collision-safe name is chosen. A lock prevents two real
+imports from using the same inventory concurrently.
+
+Dry runs still connect and enumerate the phone, but read the inventory without
+creating directories, database/lock files, or downloading media. New assignments
+are only simulated; another import between preview and copying can change them.
+
+**Back up the hidden `.iphone-import.sqlite3` file with your photos.** The
+inventory contains device identifiers and photo metadata; treat it as private.
+Paths are stored relative to `--dest`, so the entire destination can be moved
+with its database. Do not manually move/rename individual files without updating
+the inventory, or copies will be recreated at their recorded paths. The
+`.iphone-import.lock` file may remain after a run; it is a lock handle, not a
+database, and its presence alone does not mean an import is running.
+
+### Files imported before the inventory existed
+
+Untracked files are preserved, even with `--overwrite`; the importer cannot
+infer which phone they came from. By default it imports to collision-safe names,
+which may create a one-time duplicate of an older import.
+
+To register old copies **only when you know they belong to the connected phone**,
+use `--adopt-existing`. This trusts filename, date folder, and byte-size matches;
+it does not compare content and could attribute another phone's photo incorrectly.
+It refuses adoption when the existing file's size differs or it is not a regular
+file. Adoption and overwrite must be run separately.
+
+```sh
+# Connect the phone whose photos were previously copied into this destination.
+# Verify the preview against the known old imports before removing --dry-run.
+swift copy-iphone-photos.swift --dest "/Volumes/Photo Archive" \
+  --from 2026-11-06 --exclude-movies --adopt-existing --dry-run
+
+# Both phones can then import to the same root, without a per-phone subfolder.
+swift copy-iphone-photos.swift --dest "/Volumes/Photo Archive" \
+  --from 2026-11-06 --exclude-movies
+```
+
+Files under an old per-phone subfolder are not automatically migrated. Preserve
+them until you have verified the new shared-root import and its inventory.
 
 If multiple cameras/phones are connected, use `--device "Exact iPhone Name"` to
 select one; otherwise the first discovered camera is used. Discovery, catalog
