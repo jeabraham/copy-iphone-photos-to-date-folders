@@ -878,7 +878,14 @@ final class CompanionImporter {
                 for resource in resources {
                     guard let type = resource["type"] as? String, let file = resource["name"] as? String else { continue }
                     let sourcePath = String(decoding: try JSONEncoder().encode(["companion", id, type, file]), as: UTF8.self)
-                    let plan = try planner.plan(deviceID: identity, sourcePath: sourcePath, name: file, date: date)
+                    let size = (resource["size"] as? NSNumber)?.int64Value ?? 0
+                    let plan = try planner.plan(deviceID: identity, sourcePath: sourcePath, name: file,
+                                                date: date, sourceSize: size)
+                    if plan.adopt {
+                        try inventory.reserve(plan.record, deviceName: name, originalName: file,
+                                              date: date, sourceSize: size, modified: nil)
+                        print("\(options.dryRun ? "[DRY RUN] Would adopt" : "Adopted") existing file for this device: \(plan.target.path)")
+                    }
                     if plan.skip {
                         print("Skipping (already imported from this device): \(plan.target.path)")
                         skipped += 1

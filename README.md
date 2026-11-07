@@ -221,7 +221,8 @@ rule, `--exclude-movies` and `--overwrite` behave as in the Image Capture mode,
 and re-running resumes safely. Files that fail (for example, an iCloud download
 error) are reported and retried on the next run. Only original resources are
 copied (photo, video, RAW alternate, Live Photo video), not edited renders, and
-`--adopt-existing` does not apply because the app reports no file sizes.
+`--adopt-existing` works by matching filename, date and byte size against files
+already in the destination (e.g. from an earlier Image Capture import).
 
 Limitations of this first version: one phone at a time, no on-screen progress
 beyond a log, and no extra authentication beyond loopback-only access. Test with

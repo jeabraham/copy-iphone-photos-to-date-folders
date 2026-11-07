@@ -32,7 +32,9 @@ enum PhotoLibrary {
             let resources: [[String: Any]] = PHAssetResource.assetResources(for: asset).compactMap {
                 guard let type = OriginalResource.name(for: $0.type),
                       !(excludeMovies && OriginalResource.isMovie(type)) else { return nil }
-                return ["type": type, "name": $0.originalFilename]
+                // "fileSize" is an unofficial but long-stable key; 0 means unknown.
+                let size = ($0.value(forKey: "fileSize") as? NSNumber)?.int64Value ?? 0
+                return ["type": type, "name": $0.originalFilename, "size": size]
             }
             if !resources.isEmpty {
                 assets.append(["id": asset.localIdentifier, "date": date.timeIntervalSince1970, "resources": resources])
