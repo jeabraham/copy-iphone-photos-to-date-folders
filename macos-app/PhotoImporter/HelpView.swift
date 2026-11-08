@@ -23,7 +23,10 @@ struct HelpView: View {
                 section("iPhones", [
                     "Press + and follow the checklist: connect by USB, unlock, tap Trust, and close Lightroom, Image Capture and Photos import windows.",
                     "Import directly uses the same transfer as Image Capture.",
-                    "Import via app pulls originals from the Photo Import Companion app. Keep it open on the phone and allow Full Access to Photos there.",
+                    "Import via app requires Photo Import Companion, a very simple iPhone app that is not yet publicly available.",
+                    "The companion is currently only useful for photos whose originals have already been offloaded from the phone by iCloud Photos. Use Import directly for photos stored on the phone.",
+                    "Contact the author using the GitHub feedback link below if you would like a copy of the companion app.",
+                    "If you have the companion app, keep it open on the phone and allow Full Access to Photos there.",
                     "Only plug in one phone or camera at a time.",
                     "If a photo is still downloading from iCloud, stay on Wi-Fi and try again.",
                 ])

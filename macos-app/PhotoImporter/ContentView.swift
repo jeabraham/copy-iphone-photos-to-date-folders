@@ -156,6 +156,12 @@ struct PhonesSection: View {
                         .foregroundStyle(.secondary)
                 }
                 ForEach(model.phones) { PhoneRow(detector: model.detector, source: $0) }
+                Text("Import via app requires Photo Import Companion, a very simple iPhone app that is not yet publicly available. It is currently only useful for photos whose originals have been offloaded from the phone by iCloud Photos. Use Import directly for photos stored on the phone.")
+                    .font(.caption).foregroundStyle(.secondary)
+                if let contactURL = URL(string: "https://github.com/jeabraham/copy-iphone-photos-to-date-folders/issues/new") {
+                    Link("Contact the author on GitHub to request a copy", destination: contactURL)
+                        .font(.caption)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(6)
@@ -205,6 +211,8 @@ enum PhoneGuidance {
         "Plug in the iPhone with a data-capable USB cable.",
         "Unlock the iPhone and tap Trust if asked.",
         "Close Lightroom Classic, Image Capture and Photos, or any import window they opened.",
-        "To import via the companion app, open Photo Import Companion on the phone, leave it in front, and allow Full Access to Photos there.",
+        "Use Import directly for photos stored on the phone. Import via app is currently only useful for originals offloaded by iCloud Photos.",
+        "Photo Import Companion is a very simple iPhone app and is not yet publicly available. Contact the author using the GitHub link in Help to request a copy.",
+        "If you have the companion app, open it on the phone, leave it in front, and allow Full Access to Photos there.",
     ]
 }

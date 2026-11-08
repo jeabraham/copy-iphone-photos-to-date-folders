@@ -9,7 +9,9 @@ Photo Copier - Date Folders copies photos from memory cards and iPhones into `YY
 - A memory card/card reader or an iPhone connected by USB.
 - Enough free space at your chosen destination for the copied photos and videos.
 
-Lightroom Classic is used after copying; it does not need to be running during an import. The optional **Import via app** mode requires the separate Photo Import Companion iPhone app. Use **Import directly** for USB testing without the companion.
+Lightroom Classic is used after copying; it does not need to be running during an import. Use **Import directly** for photos stored on the phone.
+
+The optional **Import via app** mode requires **Photo Import Companion**, a very simple iPhone app that is **not yet publicly available**. It is currently only useful for photos whose originals have already been offloaded from the phone by iCloud Photos. If you would like a copy, [contact the author on GitHub](https://github.com/jeabraham/copy-iphone-photos-to-date-folders/issues/new). If you have the companion, keep it open on the phone and allow Full Access to Photos there.
 
 ## Download and install
 
