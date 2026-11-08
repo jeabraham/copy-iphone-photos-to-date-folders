@@ -25,9 +25,11 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.jeabraham.PhotoImporter
         GENERATE_INFOPLIST_FILE: YES
-        INFOPLIST_KEY_CFBundleDisplayName: Photo Importer
+        PRODUCT_NAME: "Photo Copier - Date Folders"
+        PRODUCT_MODULE_NAME: PhotoImporter
+        INFOPLIST_KEY_CFBundleDisplayName: "Photo Copier - Date Folders"
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.photography
-        INFOPLIST_KEY_NSRemovableVolumesUsageDescription: Photo Importer copies photos from memory cards.
+        INFOPLIST_KEY_NSRemovableVolumesUsageDescription: Photo Copier - Date Folders copies photos from memory cards.
         INFOPLIST_KEY_NSPrincipalClass: NSApplication
         ENABLE_HARDENED_RUNTIME: YES
         ENABLE_APP_SANDBOX: NO

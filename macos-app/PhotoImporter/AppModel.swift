@@ -114,8 +114,8 @@ final class AppModel: ObservableObject {
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
         panel.directoryURL = URL(fileURLWithPath: existing?.location ?? "/Volumes")
+        panel.message = "Choose the card's DCIM folder (all subfolders are included)"
         panel.prompt = "Choose"
-        panel.message = "Choose the memory card folder (for example DCIM)"
         guard panel.runModal() == .OK, let url = panel.url else { return }
         if var existing {
             existing.location = url.path

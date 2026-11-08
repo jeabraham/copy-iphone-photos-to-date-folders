@@ -1,4 +1,4 @@
-# Photo Importer (macOS app) — specification
+# Photo Copier - Date Folders (macOS app) — specification
 
 A single-window macOS app that wraps the existing import tools. Nothing is ever deleted
 from any source.
@@ -51,6 +51,7 @@ ImageCaptureCore device name (passed as `--device`) and a user-defined label.
    Settings, Update (re-run wizard), Import directly (Image Capture), Import via app
    (companion), Delete. Each row shows a live Connected / Not detected status.
 4. **Next steps in Lightroom** button at the bottom.
+5. **Help menu** opens an in-app help window (Help > Photo Copier - Date Folders Help).
 
 ## Import modal
 

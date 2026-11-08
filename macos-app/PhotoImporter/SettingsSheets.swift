@@ -112,7 +112,10 @@ struct AddPhoneSheet: View {
             ForEach(Array(PhoneGuidance.steps.enumerated()), id: \.offset) { index, step in
                 Text("\(index + 1). \(step)").font(.callout)
             }
-            PhoneChoices(detector: model.detector, selected: $selected)
+            PhoneChoices(detector: model.detector, selected: $selected, onChoose: choose)
+            if selected == nil && !model.detector.phones.isEmpty {
+                Text("Click a detected phone above to select it.").font(.caption).foregroundStyle(.secondary)
+            }
             TextField("Name for this phone, e.g. John’s iPhone", text: $label)
             HStack {
                 Spacer()
@@ -124,12 +127,21 @@ struct AddPhoneSheet: View {
         }
         .padding(20)
         .frame(width: 520)
+        .onReceive(model.detector.$phones) { phones in
+            // With exactly one phone attached there is nothing to choose.
+            if selected == nil, phones.count == 1 { choose(phones[0]) }
+        }
         .onAppear {
             if let id = replacingID, let source = model.source(id: id) {
                 label = source.label
                 selected = source.location
             }
         }
+    }
+
+    private func choose(_ phone: DetectedPhone) {
+        selected = phone.name
+        if label.trimmingCharacters(in: .whitespaces).isEmpty { label = phone.name }
     }
 
     private func save() {
@@ -149,6 +161,7 @@ struct AddPhoneSheet: View {
 private struct PhoneChoices: View {
     @ObservedObject var detector: PhoneDetector
     @Binding var selected: String?
+    let onChoose: (DetectedPhone) -> Void
 
     var body: some View {
         VStack(alignment: .leading) {
@@ -158,7 +171,7 @@ private struct PhoneChoices: View {
             }
             ForEach(detector.phones) { phone in
                 Button {
-                    selected = phone.name
+                    onChoose(phone)
                 } label: {
                     Label(phone.name, systemImage: selected == phone.name ? "checkmark.circle.fill" : "iphone")
                 }
