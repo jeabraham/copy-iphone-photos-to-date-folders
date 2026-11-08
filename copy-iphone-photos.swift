@@ -15,6 +15,17 @@ import ImageCaptureCore
 import UniformTypeIdentifiers
 #endif
 
+// Hooks for embedding this file in the macOS app (built with -D IMPORTER_LIBRARY).
+// As a script, output goes to stdout/stderr and nothing is ever cancelled.
+nonisolated(unsafe) var importerCancelled: () -> Bool = { false }
+nonisolated(unsafe) var importerErrorSink: (String) -> Void = { fputs("\($0)\n", stderr) }
+#if IMPORTER_LIBRARY
+nonisolated(unsafe) var importerOutputSink: (String) -> Void = { _ in }
+func print(_ items: Any..., separator: String = " ", terminator: String = "\n") {
+    importerOutputSink(items.map { "\($0)" }.joined(separator: separator))
+}
+#endif
+
 struct ImportError: LocalizedError {
     let message: String
     var errorDescription: String? { message }
@@ -416,6 +427,7 @@ final class Importer: NSObject, ICDeviceBrowserDelegate, ICCameraDeviceDelegate 
     var accessDeadline: Date?
     var catalogReady = false
     var finished = false
+    var onFinish: ((Int32) -> Void)?
     var failures = 0
     var copied = 0
     var skipped = 0
@@ -436,7 +448,7 @@ final class Importer: NSObject, ICDeviceBrowserDelegate, ICCameraDeviceDelegate 
     }
 
     func fail(_ message: String) {
-        fputs("\(message)\n", stderr)
+        importerErrorSink(message)
         failures += 1
         finish()
     }
@@ -453,6 +465,7 @@ final class Importer: NSObject, ICDeviceBrowserDelegate, ICCameraDeviceDelegate 
         if let staging = staging { try? FileManager.default.removeItem(at: staging) }
         inventory = nil
         print("Copied: \(copied); skipped: \(skipped); errors: \(failures)")
+        onFinish?(failures == 0 ? 0 : 1)
     }
 
     func deviceBrowser(_ browser: ICDeviceBrowser, didAdd device: ICDevice, moreComing: Bool) {
@@ -676,17 +689,32 @@ final class Importer: NSObject, ICDeviceBrowserDelegate, ICCameraDeviceDelegate 
             print("Copied: \(target.path)")
         } catch {
             failures += 1
-            fputs("Failed \(file.name ?? "file"): \(error.localizedDescription)\n", stderr)
+            importerErrorSink("Failed \(file.name ?? "file"): \(error.localizedDescription)")
         }
         try? FileManager.default.removeItem(at: staging)
         self.staging = nil
         downloadNext()
     }
 
-    func run() -> Int32 {
+    // Non-blocking start for the app: delegate callbacks need the main run loop, so the caller must not block it.
+    func start() {
         resetWatchdog()
         browser.start()
-        while !finished { RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.1)) }
+    }
+
+    func cancel() {
+        guard !finished else { return }
+        importerErrorSink("Cancelled.")
+        failures += 1
+        finish()
+    }
+
+    func run() -> Int32 {
+        start()
+        while !finished {
+            if importerCancelled() { cancel() }
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.1))
+        }
         return failures == 0 ? 0 : 1
     }
 }
@@ -912,6 +940,7 @@ final class CompanionImporter {
             pending.sort { $0.plan.target.path < $1.plan.target.path }
             print("Selected \(pending.count) files.")
             for item in pending {
+                if importerCancelled() { throw ImportError(message: "Cancelled.") }
                 if options.dryRun {
                     print("[DRY RUN] Would copy: \(item.plan.target.path)")
                     continue
@@ -920,12 +949,12 @@ final class CompanionImporter {
                     try fetch(item, channel: channel, inventory: inventory, deviceName: name)
                 } catch let error as ImportError where error.message.hasPrefix("Fetch failed") {
                     failures += 1
-                    fputs("\(error.message)\n", stderr)
+                    importerErrorSink(error.message)
                 }
             }
         } catch {
             failures += 1
-            fputs("\(error.localizedDescription)\n", stderr)
+            importerErrorSink(error.localizedDescription)
         }
         print("Copied: \(copied); skipped: \(skipped); errors: \(failures)")
         return failures == 0 ? 0 : 1
@@ -992,6 +1021,7 @@ final class CompanionImporter {
 }
 #endif
 
+// MARK: script entry point (the macOS app build strips everything from this line on)
 do {
     let arguments = Array(CommandLine.arguments.dropFirst())
     if arguments.contains("--help") || arguments.contains("-h") {

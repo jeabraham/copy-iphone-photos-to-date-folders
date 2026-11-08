@@ -1,0 +1,36 @@
+name: PhotoImporter
+options:
+  bundleIdPrefix: com.jeabraham
+  deploymentTarget:
+    macOS: "15.0"
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    # Set to your Developer ID team to sign for distribution.
+    DEVELOPMENT_TEAM: ""
+targets:
+  PhotoImporter:
+    type: application
+    platform: macOS
+    sources:
+      - path: PhotoImporter
+    preBuildScripts:
+      - name: Generate importer core from copy-iphone-photos.swift
+        basedOnDependencyAnalysis: false
+        script: |
+          "${SRCROOT}/Scripts/make-importer-core.sh" "${SRCROOT}/../copy-iphone-photos.swift" "${SRCROOT}/PhotoImporter/Generated/ImporterCore.swift"
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.jeabraham.PhotoImporter
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Photo Importer
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.photography
+        INFOPLIST_KEY_NSRemovableVolumesUsageDescription: Photo Importer copies photos from memory cards.
+        INFOPLIST_KEY_NSPrincipalClass: NSApplication
+        ENABLE_HARDENED_RUNTIME: YES
+        ENABLE_APP_SANDBOX: NO
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
+        OTHER_SWIFT_FLAGS: "-D IMPORTER_LIBRARY"
+        CODE_SIGN_STYLE: Automatic
