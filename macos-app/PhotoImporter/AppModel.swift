@@ -131,11 +131,10 @@ final class AppModel: ObservableObject {
     }
 
     func beginImport(_ source: ImportSource, mode: ImportMode) {
-        guard let destination else { return }
-        if mode != .card { detector.stop() }
+        guard let destination, !runner.isRunning else { return }
         activeSheet = .importing(source, mode)
         runner.start(ImportJob(source: source, mode: mode, destination: destination,
-                               settings: source.effectiveSettings(settings)))
+                               settings: source.effectiveSettings(settings)), detector: detector)
     }
 
     func finishImport() {

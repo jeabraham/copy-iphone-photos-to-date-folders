@@ -5,9 +5,27 @@ struct ImportSettings: Codable, Equatable {
     var overwrite = false
     var dryRun = false
     var adoptExisting = true
+    var redownloadDeletedFiles = false
     // Inclusive local dates as yyyy-MM-dd.
     var fromDate: String?
     var toDate: String?
+
+    init() {}
+
+    private enum CodingKeys: String, CodingKey {
+        case includeVideos, overwrite, dryRun, adoptExisting, redownloadDeletedFiles, fromDate, toDate
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        includeVideos = try values.decodeIfPresent(Bool.self, forKey: .includeVideos) ?? false
+        overwrite = try values.decodeIfPresent(Bool.self, forKey: .overwrite) ?? false
+        dryRun = try values.decodeIfPresent(Bool.self, forKey: .dryRun) ?? false
+        adoptExisting = try values.decodeIfPresent(Bool.self, forKey: .adoptExisting) ?? true
+        redownloadDeletedFiles = try values.decodeIfPresent(Bool.self, forKey: .redownloadDeletedFiles) ?? false
+        fromDate = try values.decodeIfPresent(String.self, forKey: .fromDate)
+        toDate = try values.decodeIfPresent(String.self, forKey: .toDate)
+    }
 }
 
 struct SourceOverrides: Codable, Equatable {
@@ -58,6 +76,7 @@ struct ImportJob {
         options.overwrite = settings.overwrite
         options.adoptExisting = settings.adoptExisting && !settings.overwrite
         options.dryRun = settings.dryRun
+        options.redownloadDeletedFiles = settings.redownloadDeletedFiles
         options.companion = mode == .phoneViaApp
         if mode == .phoneDirect { options.deviceName = source.location }
         let formatter = Options.dateFormatter()

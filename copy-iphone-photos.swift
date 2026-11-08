@@ -38,6 +38,7 @@ struct Options {
     var excludeMovies = false
     var overwrite = false
     var adoptExisting = false
+    var redownloadDeletedFiles = false
     var dryRun = false
     var deviceName: String?
     var deviceID: String?
@@ -64,6 +65,7 @@ struct Options {
             case "--exclude-movies": options.excludeMovies = true
             case "--overwrite": options.overwrite = true
             case "--adopt-existing": options.adoptExisting = true
+            case "--redownload-deleted-files": options.redownloadDeletedFiles = true
             case "--dry-run": options.dryRun = true
             case "--companion": options.companion = true
             case "--dest", "--from", "--to", "--device", "--device-id", "--timeout", "--port":
@@ -136,6 +138,7 @@ struct PhotoRecord {
     let relativePath: String
     let complete: Bool
     let savedSize: Int64
+    var aliases: [String] = []
 }
 
 final class PhotoInventory {
@@ -189,8 +192,18 @@ final class PhotoInventory {
                     )
                     """)
                 try rows("PRAGMA user_version = 1")
-            } else if version != "1" {
+            } else if version != "1" && version != "2" {
                 throw ImportError(message: "Unsupported import database schema; preserve the database and check the script version.")
+            }
+            if !readOnly || !exists {
+                // Aliases preserve distinct source identities without duplicating identical files.
+                try rows("""
+                    CREATE TABLE IF NOT EXISTS photo_aliases (
+                        device_id TEXT NOT NULL, asset_id TEXT NOT NULL, canonical_asset_id TEXT NOT NULL,
+                        PRIMARY KEY (device_id, asset_id)
+                    )
+                    """)
+                try rows("PRAGMA user_version = 2")
             }
         } catch {
             closeInventory()
@@ -234,10 +247,49 @@ final class PhotoInventory {
     }
 
     func records() throws -> [PhotoRecord] {
-        try rows("SELECT device_id, asset_id, relative_path, complete, saved_size FROM photos").map {
+        let hasAliases = try rows("PRAGMA user_version").first?.first == "2"
+        let aliases = hasAliases ? try rows("SELECT device_id, asset_id, canonical_asset_id FROM photo_aliases") : []
+        let grouped = Dictionary(grouping: aliases, by: { [$0[0], $0[2]] })
+        return try rows("SELECT device_id, asset_id, relative_path, complete, saved_size FROM photos").map {
             PhotoRecord(deviceID: $0[0], assetID: $0[1], relativePath: $0[2],
-                        complete: $0[3] == "1", savedSize: Int64($0[4]) ?? 0)
+                        complete: $0[3] == "1", savedSize: Int64($0[4]) ?? 0,
+                        aliases: (grouped[[$0[0], $0[1]]] ?? []).map { $0[1] })
         }
+    }
+
+    // Only merge a newly downloaded source after comparing bytes with an intact file
+    // from the SAME phone. Names, sizes, and dates alone are not proof of identity.
+    func reuseIdenticalDownload(_ record: PhotoRecord, downloaded: URL, size: Int64,
+                               options: Options) throws -> URL? {
+        guard !readOnly, !record.complete, !options.overwrite else { return nil }
+        let candidates = try rows("""
+            SELECT asset_id, relative_path FROM photos
+            WHERE device_id = ? AND asset_id != ? AND complete = 1 AND saved_size = ?
+              AND original_name = (SELECT original_name FROM photos WHERE device_id = ? AND asset_id = ?)
+            ORDER BY relative_path
+            """, [record.deviceID, record.assetID, String(size), record.deviceID, record.assetID])
+        let validator = try PhotoPlanner(options: options, records: [])
+        let manager = FileManager.default
+        for candidate in candidates {
+            let target = try validator.target(for: candidate[1])
+            let attributes = try? manager.attributesOfItem(atPath: target.path)
+            guard attributes?[.type] as? FileAttributeType == .typeRegular,
+                  (attributes?[.size] as? NSNumber)?.int64Value == size,
+                  manager.contentsEqual(atPath: downloaded.path, andPath: target.path) else { continue }
+            try rows("BEGIN IMMEDIATE")
+            do {
+                try rows("INSERT INTO photo_aliases (device_id, asset_id, canonical_asset_id) VALUES (?, ?, ?)",
+                         [record.deviceID, record.assetID, candidate[0]])
+                try rows("DELETE FROM photos WHERE device_id = ? AND asset_id = ? AND complete = 0",
+                         [record.deviceID, record.assetID])
+                try rows("COMMIT")
+            } catch {
+                _ = try? rows("ROLLBACK")
+                throw error
+            }
+            return target
+        }
+        return nil
     }
 
     func reserve(_ record: PhotoRecord, deviceName: String, originalName: String,
@@ -283,22 +335,25 @@ struct PhotoPlan {
     let skip: Bool
     let replace: Bool
     var adopt = false
+    var deleted = false
 }
 
 final class PhotoPlanner {
     let options: Options
     private var known: [String: PhotoRecord] = [:]
     private var claimed: Set<String> = []
-    private var byPath: [String: PhotoRecord] = [:]
     private var planned: Set<String> = []
+    private var scheduledPaths: Set<String> = []
 
     init(options: Options, records: [PhotoRecord]) throws {
         self.options = options
         for record in records {
             _ = try target(for: record.relativePath)
             known[try key(deviceID: record.deviceID, assetID: record.assetID)] = record
+            for alias in record.aliases {
+                known[try key(deviceID: record.deviceID, assetID: alias)] = record
+            }
             claimed.insert(PhotoInventory.pathKey(record.relativePath))
-            byPath[PhotoInventory.pathKey(record.relativePath)] = record
         }
     }
 
@@ -306,7 +361,7 @@ final class PhotoPlanner {
         String(decoding: try JSONEncoder().encode([deviceID, assetID]), as: UTF8.self)
     }
 
-    private func target(for relative: String) throws -> URL {
+    fileprivate func target(for relative: String) throws -> URL {
         let components = relative.split(separator: "/", omittingEmptySubsequences: false)
         guard components.count == 3, components.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." }),
               !relative.contains("\0") else {
@@ -337,6 +392,9 @@ final class PhotoPlanner {
         }
         if let record = known[identity] {
             let saved = try target(for: record.relativePath)
+            if record.complete && !exists(saved) && !options.redownloadDeletedFiles {
+                return PhotoPlan(record: record, target: saved, skip: true, replace: false, deleted: true)
+            }
             if record.complete || !exists(saved) {
                 let attributes = try? FileManager.default.attributesOfItem(atPath: saved.path)
                 let size = attributes?[.size] as? NSNumber
@@ -345,7 +403,8 @@ final class PhotoPlanner {
                 if exists(saved) && !intact && !options.overwrite {
                     throw ImportError(message: "Recorded photo has changed or is unreadable: \(saved.path). Use --overwrite to refresh it.")
                 }
-                return PhotoPlan(record: record, target: saved, skip: intact && !options.overwrite,
+                let alreadyScheduled = !scheduledPaths.insert(PhotoInventory.pathKey(record.relativePath)).inserted
+                return PhotoPlan(record: record, target: saved, skip: alreadyScheduled || (intact && !options.overwrite),
                                  replace: record.complete && options.overwrite)
             }
         }
@@ -353,11 +412,8 @@ final class PhotoPlanner {
         let day = Options.dateFormatter().string(from: date)
         var relative = "\(day.prefix(4))/\(day)/\(name)"
         let base = try target(for: relative)
-        // Same phone, same file recorded by another source identity (e.g. Image Capture vs companion).
-        if options.adoptExisting, let owner = byPath[PhotoInventory.pathKey(relative)], owner.deviceID == deviceID,
-           owner.complete, sourceSize > 0, owner.savedSize == sourceSize, exists(base) {
-            return PhotoPlan(record: owner, target: base, skip: true, replace: false)
-        }
+        // Different source identities are compared byte-for-byte after download,
+        // including companion resources whose size isn't available in the catalog.
         if options.adoptExisting && !claimed.contains(PhotoInventory.pathKey(relative)) && exists(base) {
             let attributes = try FileManager.default.attributesOfItem(atPath: base.path)
             let size = (attributes[.size] as? NSNumber)?.int64Value ?? 0
@@ -401,6 +457,7 @@ Usage: swift copy-iphone-photos.swift [options]
   --dry-run           List planned copies without downloading or writing files
   --device NAME       Exact device name (otherwise use the first camera found)
   --device-id ID      Stable device identity override (required if no serial number)
+  --redownload-deleted-files  Restore previously imported iPhone files deleted from the destination
   --companion         Pull originals over USB from the iOS companion app instead of Image Capture
   --port N            Companion app TCP port (default: 58214)
   --timeout SECONDS   Maximum idle wait for discovery/catalog/download (default: 120)
@@ -595,7 +652,7 @@ final class Importer: NSObject, ICDeviceBrowserDelegate, ICCameraDeviceDelegate 
                                               date: date, sourceSize: Int64(file.fileSize), modified: file.modificationDate)
                         print("\(options.dryRun ? "[DRY RUN] Would adopt" : "Adopted") existing file for this device: \(plan.target.path)")
                     } else {
-                        print("Skipping (already imported from this device): \(plan.target.path)")
+                        print("Skipping (\(plan.deleted ? "previously imported; deleted locally" : "already imported from this device")): \(plan.target.path)")
                     }
                     skipped += 1
                     continue
@@ -676,17 +733,23 @@ final class Importer: NSObject, ICDeviceBrowserDelegate, ICCameraDeviceDelegate 
             guard let size = attributes[.size] as? NSNumber, size.int64Value > 0 else {
                 throw ImportError(message: "Download returned an empty file for \(target.lastPathComponent)")
             }
-            if plan.replace {
-                // Same-filesystem rename replaces atomically and does not follow target symlinks.
-                guard rename(source.path, target.path) == 0 else {
-                    throw ImportError(message: "Cannot replace \(target.path): \(String(cString: strerror(errno)))")
-                }
+            if let existing = try inventory.reuseIdenticalDownload(plan.record, downloaded: source,
+                                                                   size: size.int64Value, options: options) {
+                skipped += 1
+                print("Skipping (identical content already imported from this device): \(existing.path)")
             } else {
-                try FileManager.default.moveItem(at: source, to: target)
+                if plan.replace {
+                    // Same-filesystem rename replaces atomically and does not follow target symlinks.
+                    guard rename(source.path, target.path) == 0 else {
+                        throw ImportError(message: "Cannot replace \(target.path): \(String(cString: strerror(errno)))")
+                    }
+                } else {
+                    try FileManager.default.moveItem(at: source, to: target)
+                }
+                try inventory.complete(plan.record, size: size.int64Value)
+                copied += 1
+                print("Copied: \(target.path)")
             }
-            try inventory.complete(plan.record, size: size.int64Value)
-            copied += 1
-            print("Copied: \(target.path)")
         } catch {
             failures += 1
             importerErrorSink("Failed \(file.name ?? "file"): \(error.localizedDescription)")
@@ -930,7 +993,7 @@ final class CompanionImporter {
                         print("\(options.dryRun ? "[DRY RUN] Would adopt" : "Adopted") existing file for this device: \(plan.target.path)")
                     }
                     if plan.skip {
-                        if !plan.adopt { print("Skipping (already imported from this device): \(plan.target.path)") }
+                        if !plan.adopt { print("Skipping (\(plan.deleted ? "previously imported; deleted locally" : "already imported from this device")): \(plan.target.path)") }
                         skipped += 1
                     } else {
                         pending.append((id, type, file, date, plan))
@@ -1007,6 +1070,12 @@ final class CompanionImporter {
             break
         }
         try handle.close()
+        if let existing = try inventory.reuseIdenticalDownload(plan.record, downloaded: partial,
+                                                               size: received, options: options) {
+            skipped += 1
+            print("Skipping (identical content already imported from this device): \(existing.path)")
+            return
+        }
         if plan.replace {
             guard rename(partial.path, target.path) == 0 else {
                 throw ImportError(message: "Cannot replace \(target.path): \(String(cString: strerror(errno)))")

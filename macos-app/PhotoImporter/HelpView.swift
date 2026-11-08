@@ -16,6 +16,8 @@ struct HelpView: View {
                 section("Memory cards", [
                     "Press + and choose the card's DCIM folder. All subfolders are included.",
                     "Insert the card, then press Import. Show opens the card in Finder.",
+                    "Card imports use the destination inventory. Previously imported photos stay deleted unless Redownload deleted photos is enabled in destination Settings.",
+                    "Keep a separate source row for each card. Use Update location if its mount name changes, so its import history stays linked.",
                     "If the card is mounted under another name, use Update location. Delete only removes the row, never any photos.",
                 ])
                 section("iPhones", [
@@ -25,6 +27,14 @@ struct HelpView: View {
                     "Only plug in one phone or camera at a time.",
                     "If a photo is still downloading from iCloud, stay on Wi-Fi and try again.",
                 ])
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Beta feedback").font(.headline)
+                    if let feedbackURL = URL(string: "https://github.com/jeabraham/copy-iphone-photos-to-date-folders/issues/new") {
+                        Link("Report a bug or suggest an improvement on GitHub", destination: feedbackURL)
+                    }
+                    Text("Include the app version, macOS version, source device, and steps to reproduce. GitHub reports are public; remove personal details from screenshots and logs.")
+                }
+
                 section("While importing", [
                     "The import window shows progress. Cancel stops the import; Done is available once it has finished.",
                     "After importing, use Next steps in Lightroom to add the folder to your catalog.",

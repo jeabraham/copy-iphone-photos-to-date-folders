@@ -11,8 +11,12 @@ struct DestinationSettingsSheet: View {
                 .foregroundStyle(.secondary)
             Toggle("Include videos", isOn: $model.settings.includeVideos)
             Toggle("Overwrite existing files", isOn: $model.settings.overwrite)
+            Toggle("Redownload deleted photos", isOn: $model.settings.redownloadDeletedFiles)
+            Text("When off, previously imported card and iPhone files stay deleted, even when overwrite is on.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
             Toggle("Dry run (list what would be copied)", isOn: $model.settings.dryRun)
-            Toggle("Adopt matching files already in the destination (iPhones)", isOn: $model.settings.adoptExisting)
+            Toggle("Adopt matching files already in the destination", isOn: $model.settings.adoptExisting)
                 .disabled(model.settings.overwrite)
             HStack {
                 Spacer()

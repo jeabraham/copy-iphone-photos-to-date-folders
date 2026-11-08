@@ -15,7 +15,19 @@ print_help() {
   echo
   echo "Copies image files to the current directory in YYYY/YYYY-MM-DD subfolders,"
   echo "using macOS filesystem creation dates. Existing files are not overwritten."
+  echo
+  echo "This shell command is deliberately simplified: it has no import inventory"
+  echo "and will copy deleted destination files again. For inventory tracking and"
+  echo "control over redownloading deleted photos, use the macOS app instead:"
+  echo "  Photo Copier - Date Folders"
+  echo "See the README for app setup. A download URL will be added when available."
+  # Add the published macOS app download URL here when one is available.
 }
+
+if [[ "$#" -eq 0 ]]; then
+  print_help
+  exit 0
+fi
 
 while [[ "$#" -gt 0 ]]; do
   case "$1" in

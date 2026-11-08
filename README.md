@@ -4,6 +4,13 @@ Copy media from a USB-connected iPhone into ordinary date folders, without
 first syncing to a Mac Photos library. Also includes an SD-card image copier.
 Neither script deletes anything from its source.
 
+For SD-card imports, use the macOS app **Photo Copier - Date Folders** for import
+history, safe filename collisions, and control over restoring deleted photos.
+The SD-card shell command is deliberately simplified and has no inventory.
+A macOS app download URL will be added here when available. Until then, with
+Xcode and XcodeGen installed, run `bash macos-app/generate.sh`, open
+`macos-app/PhotoImporter.xcodeproj`, and build/run the PhotoImporter scheme.
+
 ## iPhone importer (macOS 11 or later)
 
 Requires Apple's command-line developer tools (`xcode-select --install`), which
@@ -59,10 +66,21 @@ Renaming a phone does not change its serial-based identity.
 A source file is identified by its device, full catalog path, and full creation
 timestamp, not just its filename and day. A successful recorded import is skipped
 **before downloading** if its saved file still exists with the recorded byte
-size. Missing files are reimported. Changed/unreadable saved files are reported;
-use `--overwrite` to refresh them. This is metadata-based deduplication, not
-content hashing: same-size external changes are not detected, and changing source
-names, catalog paths, creation dates, or transfer formats can result in new copies.
+size. Successfully imported files that you delete locally stay deleted by default,
+even with `--overwrite`. Use `--redownload-deleted-files` (or **Redownload deleted
+photos** in the macOS destination settings) to restore them. Failed or
+interrupted imports still retry. Changed/unreadable saved files are reported;
+use `--overwrite` to refresh them. This initial check uses metadata, so same-size
+external changes are not detected.
+
+For new source identities, a completed download is compared byte-for-byte with
+previously imported files of the same name and size from the same phone. Identical
+content is stored once, with both source identities recorded as aliases. This
+handles duplicate DCIM entries and switching between direct and companion imports.
+Different phones retain separate copies; different bytes are never merged. Existing
+duplicate files are not removed. Overwrite bypasses this content matching.
+The first encounter still transfers the bytes to verify them; dry runs cannot
+predict this reduction because they do not download media.
 Duplicate indistinguishable catalog entries are reported rather than silently merged.
 
 The first asset normally keeps `IMG_1234.HEIC`. A different asset or phone whose
@@ -92,10 +110,25 @@ are only simulated; another import between preview and copying can change them.
 **Back up the hidden `.iphone-import.sqlite3` file with your photos.** The
 inventory contains device identifiers and photo metadata; treat it as private.
 Paths are stored relative to `--dest`, so the entire destination can be moved
-with its database. Do not manually move/rename individual files without updating
-the inventory, or copies will be recreated at their recorded paths. The
+with its database. Moving/renaming individual files is treated as a local deletion
+at the original path; the inventory does not track their new location. The
 `.iphone-import.lock` file may remain after a run; it is a lock handle, not a
 database, and its presence alone does not mean an import is running.
+
+Real imports upgrade older inventories to schema version 2 to store aliases;
+use the updated script and app with that destination. Dry runs also support
+version 1 without modifying it.
+
+The macOS app logs every import message, including file paths, to Console with
+subsystem `com.jeabraham.PhotoImporter` and category `Import`. Messages include
+an import session ID and remain available after closing the import window, subject
+to macOS log retention. For example:
+
+```bash
+log show --last 1h --style compact --predicate 'subsystem == "com.jeabraham.PhotoImporter" AND category == "Import"'
+```
+
+Run the importer regression checks with `bash macos-app/Tests/run.sh`.
 
 ### Files imported before the inventory existed
 
@@ -236,9 +269,36 @@ a small date range first.
 
 ## SD-card copier (macOS)
 
-This preserves the supplied memory-card workflow: images only, filesystem
+### Recommended: Photo Copier - Date Folders
+
+The macOS app uses the same destination inventory for SD cards and iPhones.
+It records successful imports, preserves separate files when names collide,
+retries incomplete copies, supports read-only dry runs, and can recognize identical
+content from the same card. **Redownload deleted photos** defaults to **off**:
+successfully imported files you delete stay deleted, even with overwrite enabled.
+Turn it on to restore them. This includes videos when video import is enabled.
+
+Each saved card source row has a persistent identity. Keep one row per card and
+use **Update location** if the mount path changes; deleting and re-adding the row
+creates a new identity. File identities use the path relative to the chosen card
+folder and its filesystem creation date, so keep choosing the same folder level
+(for example, DCIM). Back up `.iphone-import.sqlite3` with the destination even
+when you import only from cards.
+
+For older card imports, **Adopt matching files already in the destination** can
+record existing untracked files whose names, date folders, and sizes match.
+It cannot recover history for files deleted before inventory tracking was added.
+The app never deletes photos from the card.
+
+### Deliberately simplified shell command
+
+Prefer **Photo Copier - Date Folders** for normal imports. The shell command
+preserves the supplied memory-card workflow: images only, filesystem
 creation dates, `YYYY/YYYY-MM-DD` folders in the **current directory**, and no overwrite.
-It remains a standalone shell script and does not use the iPhone SQLite inventory.
+It deliberately does not use an inventory, distinguish same-name photos from
+different cards, or remember deleted imports. Deleted destination files will be
+copied again. Both `-h`/`--help` and invocation without parameters display the
+usage guide and app recommendation; no-argument invocation does not copy files.
 Its default source is `/Volumes/NIKON Z 5  /DCIM/102NCZ_5`.
 
 Existing files are skipped by filename within the target date folder. Previously
@@ -257,8 +317,9 @@ Dry runs do not create directories.
 
 ## Validation
 
-There is no existing automated test/build infrastructure. Shell syntax and
-lint can be checked with `bash -n copy-sd-photos.sh` and, if installed,
+Run the Swift Testing regression suite with `bash macos-app/Tests/run.sh`.
+It exercises the shared inventory and macOS card importer in temporary directories.
+Shell syntax and lint can be checked with `bash -n copy-sd-photos.sh` and, if installed,
 `shellcheck copy-sd-photos.sh`. On a Mac, run
 `swiftc -typecheck copy-iphone-photos.swift`, then a dry run and a small real import
 to verify device permissions, metadata, and transfer behavior. On non-macOS
