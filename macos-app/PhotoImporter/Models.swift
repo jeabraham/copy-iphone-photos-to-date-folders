@@ -46,6 +46,10 @@ struct ImportSource: Codable, Identifiable, Equatable {
     // Card: folder path. Phone: the device name reported by ImageCaptureCore.
     var location: String
     var overrides = SourceOverrides()
+    // Optional fields preserve compatibility with source rows saved before card markers.
+    var cardUUID: String?
+    var obsolete: Bool?
+
 
     func effectiveSettings(_ base: ImportSettings) -> ImportSettings {
         var settings = base
@@ -67,6 +71,7 @@ struct ImportJob {
     let mode: ImportMode
     let destination: URL
     let settings: ImportSettings
+    var allowMissingCardMarker = false
 
     // Maps the app's settings onto the importer's options, validating the date range like the CLI does.
     func importerOptions() throws -> Options {
@@ -95,5 +100,44 @@ struct ImportJob {
             throw ImportError(message: "The from date must not be later than the to date.")
         }
         return options
+    }
+}
+
+// The marker is deliberately visible and sits outside DCIM, where cameras store photos.
+enum CardIdentity {
+    static let filename = "PhotoImporter-Card-ID.txt"
+
+    static func markerURL(for folder: URL) -> URL {
+        folder.appendingPathComponent("..").standardizedFileURL.appendingPathComponent(filename)
+    }
+
+    static func read(from folder: URL) throws -> String? {
+        let url = markerURL(for: folder)
+        let attributes: [FileAttributeKey: Any]
+        do {
+            attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+        } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
+            return nil
+        }
+        guard attributes[.type] as? FileAttributeType == .typeRegular,
+              let size = attributes[.size] as? NSNumber, size.intValue <= 128 else {
+            throw ImportError(message: "The card identifier is not a small regular file: \(url.path)")
+        }
+        let text = try String(contentsOf: url, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let uuid = UUID(uuidString: text) else {
+            throw ImportError(message: "Invalid card identifier in \(url.path). The file has not been changed.")
+        }
+        return uuid.uuidString
+    }
+
+    static func create(for folder: URL, uuid: String) throws {
+        guard let value = UUID(uuidString: uuid) else {
+            throw ImportError(message: "Invalid card UUID")
+        }
+        // Never overwrite an identifier created by another importer or belonging to another card.
+        try Data((value.uuidString + "\n").utf8).write(to: markerURL(for: folder), options: .withoutOverwriting)
+        guard try read(from: folder) == value.uuidString else {
+            throw ImportError(message: "Could not verify the card identifier after writing it.")
+        }
     }
 }

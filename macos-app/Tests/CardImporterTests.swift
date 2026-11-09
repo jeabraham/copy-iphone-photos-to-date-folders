@@ -157,3 +157,99 @@ func cardSameNameFilesAreComparedByContent(identical: Bool) throws {
     #expect(f.run() == 0)
     #expect(try f.records().count == records.count)
 }
+
+@Test
+func cardMarkerRoundTripAndNoOverwrite() throws {
+    let f = try CardFixture()
+    let folder = URL(fileURLWithPath: f.source.location)
+    #expect(try CardIdentity.read(from: folder) == nil)
+    try CardIdentity.create(for: folder, uuid: f.source.id)
+    #expect(try CardIdentity.read(from: folder) == f.source.id)
+    #expect(CardIdentity.markerURL(for: folder).deletingLastPathComponent() == folder.deletingLastPathComponent())
+    #expect(throws: (any Error).self) {
+        try CardIdentity.create(for: folder, uuid: UUID().uuidString)
+    }
+    #expect(try CardIdentity.read(from: folder) == f.source.id)
+}
+
+@Test
+func markedCardPreservesLegacyHistoryAndRejectsReplacement() throws {
+    let f = try CardFixture()
+    _ = try f.write()
+    #expect(f.run() == 0)
+    let folder = URL(fileURLWithPath: f.source.location)
+    try CardIdentity.create(for: folder, uuid: f.source.id)
+    f.source.cardUUID = f.source.id
+    #expect(f.run() == 0)
+    #expect(f.messages.contains { $0.contains("already imported from this card") })
+    try FileManager.default.removeItem(at: CardIdentity.markerURL(for: folder))
+    #expect(f.run() == 1)
+    #expect(try f.records().count == 1)
+    try CardIdentity.create(for: folder, uuid: UUID().uuidString)
+    #expect(f.run() == 1)
+}
+
+@Test
+func cardMarkerRejectsMalformedAndSymlinkedFiles() throws {
+    let f = try CardFixture()
+    let folder = URL(fileURLWithPath: f.source.location)
+    let marker = CardIdentity.markerURL(for: folder)
+    try Data("not-a-uuid".utf8).write(to: marker)
+    #expect(throws: (any Error).self) { try CardIdentity.read(from: folder) }
+    try FileManager.default.removeItem(at: marker)
+    let other = f.root.appendingPathComponent("other.txt")
+    try Data(UUID().uuidString.utf8).write(to: other)
+    try FileManager.default.createSymbolicLink(at: marker, withDestinationURL: other)
+    #expect(throws: (any Error).self) { try CardIdentity.read(from: folder) }
+}
+
+@Test
+func markerIdentitySurvivesNewRowAndObsoleteRowCannotImport() throws {
+    let f = try CardFixture()
+    _ = try f.write()
+    let folder = URL(fileURLWithPath: f.source.location)
+    try CardIdentity.create(for: folder, uuid: f.source.id)
+    f.source.cardUUID = f.source.id
+    #expect(f.run() == 0)
+    f.source.id = UUID().uuidString
+    #expect(f.run() == 0)
+    #expect(f.messages.contains { $0.contains("already imported from this card") })
+    f.source.obsolete = true
+    #expect(f.run() == 1)
+}
+
+@Test
+func legacySourceDecodesWithoutCardFields() throws {
+    let data = Data(#"{"id":"old","kind":"card","label":"Card","location":"/Volumes/Card/DCIM","overrides":{}}"#.utf8)
+    let source = try JSONDecoder().decode(ImportSource.self, from: data)
+    #expect(source.cardUUID == nil)
+    #expect(source.obsolete == nil)
+}
+
+@Test
+func restoredMarkerRetainsHistoryWhenUUIDDiffersFromRowID() throws {
+    let f = try CardFixture()
+    _ = try f.write()
+    let folder = URL(fileURLWithPath: f.source.location)
+    let retainedUUID = UUID().uuidString
+    f.source.cardUUID = retainedUUID
+    try CardIdentity.create(for: folder, uuid: retainedUUID)
+    #expect(f.run() == 0)
+    try FileManager.default.removeItem(at: CardIdentity.markerURL(for: folder))
+    #expect(f.run() == 1)
+    var job = f.job
+    job.allowMissingCardMarker = true
+    var messages: [String] = []
+    #expect(CardImporter.run(job: job, isCancelled: { false }, log: { messages.append($0) }) == 0)
+    #expect(messages.contains { $0.contains("already imported from this card") })
+    #expect(try f.records().count == 1)
+    // The exception is per job, not stored in the source or inventory.
+    #expect(f.run() == 1)
+    try CardIdentity.create(for: folder, uuid: retainedUUID)
+    #expect(f.run() == 0)
+    #expect(f.messages.contains { $0.contains("already imported from this card") })
+    #expect(try f.records().first?.deviceID == "card:\(retainedUUID)")
+    try FileManager.default.removeItem(at: CardIdentity.markerURL(for: folder))
+    try CardIdentity.create(for: folder, uuid: UUID().uuidString)
+    #expect(CardImporter.run(job: job, isCancelled: { false }, log: { _ in }) == 1)
+}

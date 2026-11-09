@@ -131,7 +131,7 @@ struct CardRow: View {
         HStack {
             VStack(alignment: .leading) {
                 Text(source.label).font(.headline)
-                Text(isMounted ? source.location : "Not found: \(source.location). Insert the card or use Update location.")
+                Text(source.obsolete == true ? "Obsolete location — use Update location to reactivate" : isMounted ? source.location : "Not found: \(source.location). Insert the card or use Update location.")
                     .font(.caption).foregroundStyle(isMounted ? Color.secondary : Color.red)
                     .lineLimit(1).truncationMode(.middle)
             }
@@ -139,7 +139,7 @@ struct CardRow: View {
             Button("Settings") { model.activeSheet = .sourceSettings(source.id) }
             Button("Show") { model.show(source) }.disabled(!isMounted)
             Button("Update location") { model.chooseCardFolder(replacing: source) }
-            Button("Import") { model.beginImport(source, mode: .card) }.disabled(!isMounted)
+            Button("Import") { model.beginImport(source, mode: .card) }.disabled(!isMounted || source.obsolete == true)
             Button("Delete", role: .destructive) { model.delete(source) }
         }
     }

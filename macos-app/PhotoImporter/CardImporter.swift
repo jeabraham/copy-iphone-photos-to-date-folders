@@ -29,9 +29,24 @@ enum CardImporter {
         log("Destination: \"\(options.destination.path)\"")
         log("Dry run: \(options.dryRun)")
 
-        // The saved source ID survives label and mount-path changes through Update location.
-        // Keep separate source rows for separate cards.
-        let identity = "card:\(job.source.id)"
+        // The on-card UUID owns import history independently of the row or mount path.
+        // Unmarked cards use the row ID only after the UI asks the user to confirm identity.
+        let identity = "card:\(job.source.cardUUID ?? job.source.id)"
+        if job.source.obsolete == true {
+            log("This card location is obsolete. Use Update location before importing.")
+            return 1
+        }
+        if let expected = job.source.cardUUID {
+            do {
+                let actual = try CardIdentity.read(from: source)
+                guard actual == expected || (actual == nil && job.allowMissingCardMarker) else {
+                    throw ImportError(message: "Card identifier changed or disappeared. Select the card again before importing.")
+                }
+            } catch {
+                log(error.localizedDescription)
+                return 1
+            }
+        }
         let inventory: PhotoInventory
         let planner: PhotoPlanner
         do {

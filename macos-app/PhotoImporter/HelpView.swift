@@ -14,11 +14,14 @@ struct HelpView: View {
                     "Each card or phone can override those defaults with its own Settings.",
                 ])
                 section("Memory cards", [
-                    "Press + and choose the card's DCIM folder. All subfolders are included.",
+                    "Press +, choose the card's DCIM folder, and give the card a recognizable name such as Egypt Card #1. All subfolders are included.",
+                    "Write the same name on the physical card to help identify it. Rename a saved card in Settings without changing its import history.",
                     "Insert the card, then press Import. Show opens the card in Finder.",
                     "Card imports use the destination inventory. Previously imported photos stay deleted unless Redownload deleted photos is enabled in destination Settings.",
-                    "Keep a separate source row for each card. Use Update location if its mount name changes, so its import history stays linked.",
-                    "If the card is mounted under another name, use Update location. Delete only removes the row, never any photos.",
+                    "The app writes a visible PhotoImporter-Card-ID.txt file beside DCIM to recognize the card independently of its volume name or path. Leave this file on the card.",
+                    "If the identifier is missing, choose Same Card — Retain History only if the marker was accidentally deleted from the same, unformatted card. The app restores its saved identifier if possible. Choose New Card after formatting or replacing a card; you can then mark the old location obsolete.",
+                    "For cards that cannot store an identifier, confirm Same Card or New Card each time. Choose New Card after formatting or replacing an unmarked card.",
+                    "Use Update location when a card moves or to reactivate an obsolete row. Delete only removes the row, never any photos.",
                 ])
                 section("iPhones", [
                     "Press + and follow the checklist: connect by USB, unlock, tap Trust, and close Lightroom, Image Capture and Photos import windows.",

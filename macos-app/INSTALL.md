@@ -67,3 +67,15 @@ Screenshots or a short log excerpt help. GitHub issues are public: remove person
 ## Update or uninstall
 
 To update, quit the app and replace it in Applications with the newer download. To uninstall, quit the app and move it from Applications to the Trash. Copied photos and the destination's hidden settings/history database remain in the destination folder.
+
+## Memory-card identity
+
+When adding a card or creating a new identity after formatting, choose a recognizable name such as **Egypt Card #1**. Consider writing that name on the physical card too. Use a distinct name for a new use of a formatted card. You can change an existing row’s name in **Settings → Name** without changing its UUID or import history.
+
+The app writes a small, visible `PhotoImporter-Card-ID.txt` containing a UUID one level above the selected folder (normally beside `DCIM`). It reads that identifier before importing; the volume name and mount path are not the card's identity. Do not copy the identifier onto another card.
+
+When upgrading an existing unmarked row, confirm **Same Card** to preserve its import history, or **New Card** if the card was formatted or replaced. If an expected marker disappears, choose **Same Card — Retain History** only after accidental deletion on the same, unformatted card. This restores the saved UUID and retains import history. If restoration fails, you can continue without the marker for that import; the saved UUID is retained and you must confirm again next time. Choose **New Card** after formatting or replacing a card. A different marker also offers a separate identity. Creating a new row is followed by a choice to mark the old location obsolete. Obsolete rows keep their history but cannot import until reactivated with **Update location**. A recognized card can reuse its existing row even at a different location.
+
+If a marker cannot be written, you can cancel or continue without it. Unmarked cards require identity confirmation each time; choose **New Card** after formatting or replacing one. Invalid or unreadable existing marker files stop the operation rather than being overwritten.
+
+Choosing a folder other than `DCIM` displays a warning with **Choose Another Folder**, **Use This Folder**, and **Cancel** options. Identity setup may write the marker even when the photo import is configured as a dry run; the photo dry run still copies no photos.
