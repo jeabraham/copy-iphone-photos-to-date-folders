@@ -1,15 +1,131 @@
-# copy-iphone-photos-to-date-folders
+# Photo Copier - Date Folders
 
-Copy media from a USB-connected iPhone into ordinary date folders, without
-first syncing to a Mac Photos library. Also includes an SD-card image copier.
-Neither script deletes anything from its source.
+A small macOS app for copying photos and videos from memory cards and USB-connected
+iPhones into ordinary `YYYY/YYYY-MM-DD` folders, ready to add to Lightroom Classic.
+For example: `2026/2026-11-09/IMG_1234.HEIC`.
 
-For SD-card imports, use the macOS app **Photo Copier - Date Folders** for import
-history, safe filename collisions, and control over restoring deleted photos.
-The SD-card shell command is deliberately simplified and has no inventory.
-A macOS app download URL will be added here when available. Until then, with
-Xcode and XcodeGen installed, run `bash macos-app/generate.sh`, open
-`macos-app/PhotoImporter.xcodeproj`, and build/run the PhotoImporter scheme.
+The app is intended to make repeat imports practical as a camera card fills up:
+it remembers successful imports and skips recognized files **before reading their
+photo contents again**. It still scans directory entries and file metadata.
+It does not delete source photos or modify your Lightroom catalog.
+
+**Early alpha — testers wanted.** Start with backed-up photos, a small date range,
+and a separate test destination. Provided without warranty; this is an independent
+project, not affiliated with Adobe or Apple.
+
+- **Download:** [Mac app releases](https://github.com/jeabraham/copy-iphone-photos-to-date-folders/releases).
+  Choose an attached Mac app ZIP or DMG; GitHub's **Source code** downloads are not
+  installable apps. If a release has no packaged app asset, build from source below.
+- **Requirements:** macOS **15 or later** for the Mac app. Check the release notes
+  for the supported Mac architectures and features included in that build.
+- **Installation and first import:** [Installation guide](macos-app/INSTALL.md).
+- **Feedback:** [Report a bug or request a feature](https://github.com/jeabraham/copy-iphone-photos-to-date-folders/issues/new),
+  or [browse existing issues](https://github.com/jeabraham/copy-iphone-photos-to-date-folders/issues).
+
+## Quick start with the Mac app
+
+1. Download and unpack the app, drag **Photo Copier - Date Folders.app** to
+   **Applications**, and open it.
+2. Choose a destination folder. Keep its hidden `.iphone-import.sqlite3` database
+   with your photos: it stores settings, saved sources, and import history.
+3. Add a source with **+**:
+   - **Memory card:** choose `DCIM` and name the card, for example **Egypt Card #1**.
+   - **iPhone:** connect by USB, unlock it, tap **Trust**, and close competing import
+     windows in Lightroom, Photos, and Image Capture. Use **Import directly**.
+4. Select an optional From/To date range. Review Settings, leave **Overwrite** off
+   for normal imports, and optionally preview with **Dry run** before copying.
+5. Import, check the results, then use **Add** in Lightroom Classic's Import dialog
+   to add the destination photos to your catalog. The app's **Next steps in Lightroom**
+   explains this workflow.
+
+Videos are off by default in the Mac app; each source can override the destination's
+video, overwrite, and dry-run settings. The command-line iPhone script has different
+defaults: it includes videos unless `--exclude-movies` is supplied.
+
+### iPhone and iCloud limitations
+
+Direct USB importing can copy only media the phone exposes. With **Optimize iPhone
+Storage**, some originals may have been offloaded to iCloud; a successful direct
+import does not establish that every photo in the date range was available.
+
+**Photo Import Companion** is a very simple iPhone app whose current purpose is to
+handle those offloaded originals. It is **not yet publicly available as an installable
+app**. [Contact the author for a copy](https://github.com/jeabraham/copy-iphone-photos-to-date-folders/issues/new).
+Its source is included in `ios-companion/` for developers who want to build it.
+If you have it installed, use **Import via app**, leave it open on the phone, grant
+Full Access to Photos, and keep the phone online for iCloud downloads. It exports
+original resources, not edited renditions. See the companion section below.
+
+### Memory-card identity and repeat imports
+
+Give each card a recognizable name, such as **Egypt Card #1**, and consider writing
+that name on the physical card. **Settings → Name** changes the label without
+changing its identity or import history.
+
+The app creates a small, visible **`PhotoImporter-Card-ID.txt`** containing a UUID
+one level above the selected folder, normally beside `DCIM`. That UUID identifies
+the card independently of its volume name, mount path, or saved row. Do not copy
+the marker to another card. Use **Update location** when the card moves; recognized
+cards can reuse their saved row and history.
+
+- **Accidentally deleted marker, same unformatted card:** choose **Same Card —
+  Retain History**. The app restores the saved UUID if possible and keeps the history.
+- **Formatted or replacement card:** choose **New Card**, give it a recognizable
+  name, and optionally mark the old location **obsolete**. The old history remains;
+  an obsolete row cannot import until reactivated with **Update location**.
+- **A different marker:** the app offers the recognized card's row if known, or a
+  new row. It does not overwrite another card's marker.
+- **Read-only card or marker write failure:** cancel or continue without a marker.
+  Identity must be confirmed again on the next import. If this was a previously
+  marked card, its historical UUID is retained even when restoration fails.
+- **Unreadable or invalid existing marker:** the operation stops with an error;
+  the file is not silently overwritten.
+
+Existing rows created before this feature ask **Same Card** or **New Card** when
+first checked. Choose Same Card only if the card has not been formatted or replaced.
+Choosing a folder other than `DCIM` produces a warning and an option to return to
+the folder picker. Keep the same source folder level: file identities also include
+the relative path and filesystem creation timestamp.
+
+Normal repeat card imports check the inventory and destination file metadata without
+copying or comparing RAW contents again. A new source identity may require a full
+copy before identical-content matching within that same card identity. Creating a
+new card identity can produce additional copies of previously imported photos.
+
+**Adopt matching files already in the destination** is enabled by default in the
+Mac app. It trusts matching names, date folders, and byte sizes for **untracked**
+files. It does not compare contents, and it does not adopt files already assigned
+to another card or phone. Turn it off if the origin of existing untracked files is
+uncertain. It cannot recover history for photos deleted before inventory tracking.
+
+**Redownload deleted photos** is off by default. Recognized photos you delete from
+the destination stay deleted unless you enable it. **Overwrite** refreshes existing
+recorded files; it does not automatically detect source edits. Interrupted imports
+retry their transfer. Back up the database along with your photos.
+
+A photo **Dry run** copies no photos. Card setup or identity recovery can still write
+the marker, and source settings can still be saved. The app never deletes photos
+from the card.
+
+## Build the Mac app from source
+
+With Xcode and XcodeGen installed, run from the repository directory:
+
+```sh
+bash macos-app/generate.sh
+open macos-app/PhotoImporter.xcodeproj
+```
+
+Select the **PhotoImporter** scheme and build/run it. Configure your own signing
+team as needed. The Xcode project is generated from `macos-app/project.yml`; keep
+persistent build-setting changes there. Building locally does not itself submit
+the app for notarization. The shared importer is generated from
+`copy-iphone-photos.swift`; edit that source rather than its generated copy.
+
+## Command-line tools
+
+The repository also retains the iPhone Swift importer and a deliberately simplified
+SD-card shell copier. The following sections document their behavior and options.
 
 ## iPhone importer (macOS 11 or later)
 
@@ -229,7 +345,12 @@ contents; do not treat the USB catalog as an authoritative cloud inventory.
 Apple's [Image Capture guide](https://support.apple.com/guide/image-capture/transfer-images-imgcp1003/mac)
 describes transferring media from connected devices.
 
-## USB companion app (handles Optimize iPhone Storage)
+## USB companion app (limited availability)
+
+The companion is not yet publicly available as an installable app. It is a very
+simple app, currently useful for originals offloaded by iCloud Photos.
+[Contact the author if you would like a copy](https://github.com/jeabraham/copy-iphone-photos-to-date-folders/issues/new).
+The following instructions are for building it yourself.
 
 `ios-companion/` contains a small SwiftUI app that uses PhotoKit to fetch
 originals, **including iCloud-offloaded ones**, and stream them to the Mac over
@@ -251,7 +372,7 @@ swift copy-iphone-photos.swift --companion --dest "/Volumes/Photo Archive" \
 
 Drop `--dry-run` to copy. The destination layout, SQLite inventory, no-overwrite
 rule, `--exclude-movies` and `--overwrite` behave as in the Image Capture mode,
-and re-running resumes safely. Files that fail (for example, an iCloud download
+and re-running skips completed recorded imports and retries incomplete transfers. Files that fail (for example, an iCloud download
 error) are reported and retried on the next run. Only original resources are
 copied (photo, video, RAW alternate, Live Photo video), not edited renders, and
 `--adopt-existing` works by matching filename, date and byte size against files
@@ -271,24 +392,10 @@ a small date range first.
 
 ### Recommended: Photo Copier - Date Folders
 
-The macOS app uses the same destination inventory for SD cards and iPhones.
-It records successful imports, preserves separate files when names collide,
-retries incomplete copies, supports read-only dry runs, and can recognize identical
-content from the same card. **Redownload deleted photos** defaults to **off**:
-successfully imported files you delete stay deleted, even with overwrite enabled.
-Turn it on to restore them. This includes videos when video import is enabled.
-
-Each saved card source row has a persistent identity. Keep one row per card and
-use **Update location** if the mount path changes; deleting and re-adding the row
-creates a new identity. File identities use the path relative to the chosen card
-folder and its filesystem creation date, so keep choosing the same folder level
-(for example, DCIM). Back up `.iphone-import.sqlite3` with the destination even
-when you import only from cards.
-
-For older card imports, **Adopt matching files already in the destination** can
-record existing untracked files whose names, date folders, and sizes match.
-It cannot recover history for files deleted before inventory tracking was added.
-The app never deletes photos from the card.
+Use the Mac app for card naming, UUID markers, import history, collision handling,
+and control over restoring deleted destination photos. See
+[Memory-card identity and repeat imports](#memory-card-identity-and-repeat-imports)
+above. These features are not provided by the shell command.
 
 ### Deliberately simplified shell command
 
@@ -324,3 +431,13 @@ Shell syntax and lint can be checked with `bash -n copy-sd-photos.sh` and, if in
 `swiftc -typecheck copy-iphone-photos.swift`, then a dry run and a small real import
 to verify device permissions, metadata, and transfer behavior. On non-macOS
 hosts only option parsing and help are supported; actual imports require a Mac.
+
+## Feedback and license
+
+Please include the app version or download filename, macOS version, source device,
+steps to reproduce, and expected versus actual results in a
+[GitHub issue](https://github.com/jeabraham/copy-iphone-photos-to-date-folders/issues/new).
+Issues are public: redact personal paths, identifiers, and photo details from logs
+and screenshots. Reports of confusing instructions are welcome too.
+
+See [LICENSE](LICENSE) for the Apache License 2.0 terms and warranty disclaimer.
