@@ -56,12 +56,44 @@ Recent photos are usually the least affected.
 Apple's [Image Capture guide](https://support.apple.com/guide/image-capture/transfer-images-imgcp1003/mac)
 describes transferring media from connected devices.
 
-## Companion app: availability and developer setup
+## Companion app: availability
 
 The companion is not yet publicly available as an installable app. It is a very
 simple app, currently useful for originals offloaded by iCloud Photos.
 [Contact the author if you would like a copy](https://github.com/jeabraham/copy-iphone-photos-to-date-folders/issues/new).
-The following instructions are for building it yourself.
+
+### Use the companion with the macOS app
+
+Once Photo Import Companion is installed on your iPhone:
+
+1. Connect the iPhone to your Mac by USB, unlock it, and tap **Trust** if asked.
+   Close competing import windows in Lightroom Classic, Photos, and Image Capture.
+2. Open **Photo Import Companion** on the iPhone and grant **Full Access** to Photos.
+   Keep it open in the foreground and the phone unlocked. Keep the phone online
+   for iCloud downloads, preferably on Wi-Fi and power.
+3. Open **Photo Copier - Date Folders** on the Mac and choose your import destination.
+   Add the iPhone with **+** in the **iPhones** section if it is not already listed.
+4. Select a small **From / To** date range for your first import. Review the
+   destination or phone **Settings** for videos, overwrite, and dry run.
+5. Click **Import via app** on the iPhone's row. **Import directly** uses the direct
+   USB importer instead and does not use the companion.
+6. If you enabled **Dry run**, review the preview, turn it off, and click
+   **Import via app** again to copy. A preview does not fetch originals or prove
+   that every iCloud download will succeed.
+7. Check the copied files and any errors. Then use **Next steps in Lightroom**
+   to add the destination photos to your Lightroom Classic catalog.
+
+The Mac app shows import progress and uses the same destination inventory for
+both iPhone import modes. Switching modes may download a previously imported photo
+once to verify identical content and record its alternate identity; see
+[Inventory and duplicate handling](INVENTORY.md). The companion exports original
+resources, not edited renditions.
+
+### Build the companion yourself and use the command line
+
+The following developer instructions are an alternative to the Mac app workflow.
+You can also build the companion yourself and then use **Import via app** as above.
+Run the commands below from the repository directory.
 
 `ios-companion/` contains a small SwiftUI app that uses PhotoKit to fetch
 originals, **including iCloud-offloaded ones**, and stream them to the Mac over
@@ -95,6 +127,6 @@ can block both the importer and Xcode installs (for example CoreDevice error
 4016, "not able to fulfill the requested usage assertion requirements"). Quit
 them, or disable their "open when a device is connected" behavior, then replug.
 
-Limitations of this first version: one phone at a time, no on-screen progress
-beyond a log, and no extra authentication beyond loopback-only access. Test with
-a small date range first.
+Limitations of this first version: one phone at a time, a minimal companion UI
+with a log, and no extra authentication beyond loopback-only access. The macOS
+app provides its own import progress window. Test with a small date range first.
