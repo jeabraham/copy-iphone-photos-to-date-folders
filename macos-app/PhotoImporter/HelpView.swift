@@ -18,7 +18,7 @@ struct HelpView: View {
                     "Write the same name on the physical card to help identify it. Rename a saved card in Settings without changing its import history.",
                     "Insert the card, then press Import. Show opens the card in Finder.",
                     "Card imports use the destination inventory. Previously imported photos stay deleted unless Redownload deleted photos is enabled in destination Settings.",
-                    "The app writes a visible PhotoImporter-Card-ID.txt file beside DCIM to recognize the card independently of its volume name or path. Leave this file on the card.",
+                    "The app writes a visible PhotoImporter-Card-ID.txt file beside DCIM to recognize the card independently of its volume name or path. When the selected folder is DCIM or anywhere beneath a parent folder named DCIM, the app always reads and writes the identifier alongside that DCIM folder. For other folder names, it uses the selected folder's parent. Leave this file on the card.",
                     "If the identifier is missing, choose Same Card — Retain History only if the marker was accidentally deleted from the same, unformatted card. The app restores its saved identifier if possible. Choose New Card after formatting or replacing a card; you can then mark the old location obsolete.",
                     "For cards that cannot store an identifier, confirm Same Card or New Card each time. Choose New Card after formatting or replacing an unmarked card.",
                     "Use Update location when a card moves or to reactivate an obsolete row. Delete only removes the row, never any photos.",

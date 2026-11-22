@@ -148,8 +148,9 @@ final class AppModel: ObservableObject {
         panel.prompt = "Choose"
         while panel.runModal() == .OK, let url = panel.url {
             if url.lastPathComponent.caseInsensitiveCompare("DCIM") != .orderedSame {
+                let markerPath = CardIdentity.markerURL(for: url).path
                 let answer = choice("This folder is not called DCIM",
-                                    "Choose the camera's DCIM folder to keep photo paths consistent. If you use this folder, the card identifier will be written in its parent folder: \(url.deletingLastPathComponent().path)",
+                                    "Choose the camera's DCIM folder to keep photo paths consistent. If you use this folder and it is inside a folder named DCIM, the card identifier will be read and written alongside DCIM. Otherwise it will use the selected folder's parent.\n\nMarker location: \(markerPath)",
                                     buttons: ["Choose Another Folder", "Use This Folder", "Cancel"])
                 if answer == 0 { continue }
                 if answer != 1 { return }
@@ -203,7 +204,7 @@ final class AppModel: ObservableObject {
                 replaced = true
             } else if found == nil && original.cardUUID == nil && !isNew {
                 let answer = choice("Confirm this unmarked card",
-                                    "This row has no verified card identifier. Is this the same, unformatted card previously used for “\(original.label)”? Choose New Card if it has been replaced or formatted. A visible identifier file will be created beside the selected folder if possible.",
+                                    "This row has no verified card identifier. Is this the same, unformatted card previously used for “\(original.label)”? Choose New Card if it has been replaced or formatted. A visible identifier file will be created at \(CardIdentity.markerURL(for: folder).path) if possible.",
                                     buttons: ["Same Card", "New Card", "Cancel"])
                 if answer == 1 {
                     selected.id = UUID().uuidString

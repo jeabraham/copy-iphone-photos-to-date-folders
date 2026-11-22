@@ -108,7 +108,14 @@ enum CardIdentity {
     static let filename = "PhotoImporter-Card-ID.txt"
 
     static func markerURL(for folder: URL) -> URL {
-        folder.appendingPathComponent("..").standardizedFileURL.appendingPathComponent(filename)
+        var candidate = folder.standardizedFileURL
+        while candidate.path != "/" {
+            if candidate.lastPathComponent.caseInsensitiveCompare("DCIM") == .orderedSame {
+                return candidate.deletingLastPathComponent().appendingPathComponent(filename)
+            }
+            candidate.deleteLastPathComponent()
+        }
+        return folder.standardizedFileURL.deletingLastPathComponent().appendingPathComponent(filename)
     }
 
     static func read(from folder: URL) throws -> String? {
