@@ -138,6 +138,8 @@ struct PhotoRecord {
     let relativePath: String
     let complete: Bool
     let savedSize: Int64
+    let originalName: String
+    let date: Date
     var aliases: [String] = []
 }
 
@@ -250,10 +252,14 @@ final class PhotoInventory {
         let hasAliases = try rows("PRAGMA user_version").first?.first == "2"
         let aliases = hasAliases ? try rows("SELECT device_id, asset_id, canonical_asset_id FROM photo_aliases") : []
         let grouped = Dictionary(grouping: aliases, by: { [$0[0], $0[2]] })
-        return try rows("SELECT device_id, asset_id, relative_path, complete, saved_size FROM photos").map {
-            PhotoRecord(deviceID: $0[0], assetID: $0[1], relativePath: $0[2],
-                        complete: $0[3] == "1", savedSize: Int64($0[4]) ?? 0,
-                        aliases: (grouped[[$0[0], $0[1]]] ?? []).map { $0[1] })
+        return try rows("SELECT device_id, asset_id, relative_path, complete, saved_size, original_name, capture_date FROM photos").map {
+            guard let seconds = Double($0[6]), seconds.isFinite else {
+                throw ImportError(message: "Invalid capture timestamp in import database for \($0[2]); preserve the database.")
+            }
+            return PhotoRecord(deviceID: $0[0], assetID: $0[1], relativePath: $0[2],
+                               complete: $0[3] == "1", savedSize: Int64($0[4]) ?? 0,
+                               originalName: $0[5], date: Date(timeIntervalSince1970: seconds),
+                               aliases: (grouped[[$0[0], $0[1]]] ?? []).map { $0[1] })
         }
     }
 
@@ -341,19 +347,45 @@ struct PhotoPlan {
 final class PhotoPlanner {
     let options: Options
     private var known: [String: PhotoRecord] = [:]
+    private var ambiguous: Set<String> = []
     private var claimed: Set<String> = []
-    private var planned: Set<String> = []
     private var scheduledPaths: Set<String> = []
 
     init(options: Options, records: [PhotoRecord]) throws {
         self.options = options
         for record in records {
             _ = try target(for: record.relativePath)
-            known[try key(deviceID: record.deviceID, assetID: record.assetID)] = record
-            for alias in record.aliases {
-                known[try key(deviceID: record.deviceID, assetID: alias)] = record
+            try register(record, date: record.date)
+            // Older keys contain a source path followed by the timestamp. Keep the
+            // dates of byte-verified aliases too, without rewriting historical rows.
+            for alias in [record.assetID] + record.aliases {
+                let parts = try JSONDecoder().decode([String].self, from: Data(alias.utf8))
+                guard (parts.count == 2 || (parts.count == 3 && parts[0] == "filename-date-v1")),
+                      let value = parts.last, let seconds = Double(value), seconds.isFinite else {
+                    throw ImportError(message: "Invalid source identity in import database for \(record.relativePath); preserve the database.")
+                }
+                try register(record, date: Date(timeIntervalSince1970: seconds))
             }
             claimed.insert(PhotoInventory.pathKey(record.relativePath))
+        }
+    }
+
+    private static func assetID(name: String, date: Date) throws -> String {
+        guard date.timeIntervalSince1970.isFinite else {
+            throw ImportError(message: "Invalid capture timestamp for \(name)")
+        }
+        // Compare whole UTC seconds; USB/card catalogs may omit fractional seconds.
+        return String(decoding: try JSONEncoder().encode([
+            "filename-date-v1", name, String(date.timeIntervalSince1970.rounded(.down))
+        ]), as: UTF8.self)
+    }
+
+    private func register(_ record: PhotoRecord, date: Date) throws {
+        let identity = try key(deviceID: record.deviceID, assetID: Self.assetID(name: record.originalName, date: date))
+        if let existing = known[identity], existing.assetID != record.assetID {
+            ambiguous.insert(identity)
+        } else {
+            known[identity] = record
         }
     }
 
@@ -384,16 +416,21 @@ final class PhotoPlanner {
             || (try? FileManager.default.destinationOfSymbolicLink(atPath: target.path)) != nil
     }
 
-    func plan(deviceID: String, sourcePath: String, name: String, date: Date, sourceSize: Int64 = 0) throws -> PhotoPlan {
-        let assetID = String(decoding: try JSONEncoder().encode([sourcePath, String(date.timeIntervalSince1970)]), as: UTF8.self)
+    func plan(deviceID: String, name: String, date: Date, sourceSize: Int64 = 0) throws -> PhotoPlan {
+        let assetID = try Self.assetID(name: name, date: date)
+        _ = try options.target(name: name, date: date)
         let identity = try key(deviceID: deviceID, assetID: assetID)
-        guard planned.insert(identity).inserted else {
-            throw ImportError(message: "Ambiguous duplicate source identity for \(name); refusing to merge distinct catalog entries.")
+        guard !ambiguous.contains(identity) else {
+            throw ImportError(message: "Multiple historical imports match the source, filename and timestamp for \(name). Existing files and history have been preserved; resolve the conflicting inventory entries before importing this photo.")
         }
+        let storedAssetID = known[identity]?.assetID ?? assetID
         if let record = known[identity] {
             let saved = try target(for: record.relativePath)
             if record.complete && !exists(saved) && !options.redownloadDeletedFiles {
                 return PhotoPlan(record: record, target: saved, skip: true, replace: false, deleted: true)
+            }
+            if scheduledPaths.contains(PhotoInventory.pathKey(record.relativePath)) {
+                return PhotoPlan(record: record, target: saved, skip: true, replace: false)
             }
             if record.complete || !exists(saved) {
                 let attributes = try? FileManager.default.attributesOfItem(atPath: saved.path)
@@ -403,12 +440,11 @@ final class PhotoPlanner {
                 if exists(saved) && !intact && !options.overwrite {
                     throw ImportError(message: "Recorded photo has changed or is unreadable: \(saved.path). Use --overwrite to refresh it.")
                 }
-                let alreadyScheduled = !scheduledPaths.insert(PhotoInventory.pathKey(record.relativePath)).inserted
-                return PhotoPlan(record: record, target: saved, skip: alreadyScheduled || (intact && !options.overwrite),
+                scheduledPaths.insert(PhotoInventory.pathKey(record.relativePath))
+                return PhotoPlan(record: record, target: saved, skip: intact && !options.overwrite,
                                  replace: record.complete && options.overwrite)
             }
         }
-        _ = try options.target(name: name, date: date)
         let day = Options.dateFormatter().string(from: date)
         var relative = "\(day.prefix(4))/\(day)/\(name)"
         let base = try target(for: relative)
@@ -420,7 +456,8 @@ final class PhotoPlanner {
             guard attributes[.type] as? FileAttributeType == .typeRegular, size > 0, size == sourceSize else {
                 throw ImportError(message: "Cannot adopt \(base.path): not a regular file matching the device's size. Verify the file manually or import without --adopt-existing.")
             }
-            let record = PhotoRecord(deviceID: deviceID, assetID: assetID, relativePath: relative, complete: true, savedSize: size)
+            let record = PhotoRecord(deviceID: deviceID, assetID: storedAssetID, relativePath: relative,
+                                     complete: true, savedSize: size, originalName: name, date: date)
             known[identity] = record
             claimed.insert(PhotoInventory.pathKey(relative))
             return PhotoPlan(record: record, target: base, skip: true, replace: false, adopt: true)
@@ -437,9 +474,11 @@ final class PhotoPlanner {
             let ending = counter == 1 ? "" : "_\(counter)"
             relative = "\(day.prefix(4))/\(day)/\(stem)__\(suffix)\(ending)\(ext.isEmpty ? "" : "." + ext)"
         }
-        let record = PhotoRecord(deviceID: deviceID, assetID: assetID, relativePath: relative, complete: false, savedSize: 0)
+        let record = PhotoRecord(deviceID: deviceID, assetID: storedAssetID, relativePath: relative,
+                                 complete: false, savedSize: 0, originalName: name, date: date)
         known[identity] = record
         claimed.insert(PhotoInventory.pathKey(relative))
+        scheduledPaths.insert(PhotoInventory.pathKey(relative))
         return PhotoPlan(record: record, target: try target(for: relative), skip: false, replace: false)
     }
 }
@@ -634,17 +673,7 @@ final class Importer: NSObject, ICDeviceBrowserDelegate, ICCameraDeviceDelegate 
                 let movie = type?.conforms(to: .movie) == true
                 guard type?.conforms(to: .image) == true || movie else { continue }
                 if options.excludeMovies && movie { continue }
-                var components = [name]
-                var folder = file.parentFolder
-                while let parent = folder {
-                    guard let folderName = parent.name else {
-                        throw ImportError(message: "Missing source folder name for \(name); cannot build a reliable inventory key.")
-                    }
-                    components.insert(folderName, at: 0)
-                    folder = parent.parentFolder
-                }
-                let sourcePath = String(decoding: try JSONEncoder().encode(components), as: UTF8.self)
-                let plan = try planner.plan(deviceID: identity, sourcePath: sourcePath, name: name,
+                let plan = try planner.plan(deviceID: identity, name: name,
                                             date: date, sourceSize: Int64(file.fileSize))
                 if plan.skip {
                     if plan.adopt {
@@ -983,9 +1012,8 @@ final class CompanionImporter {
                 let date = Date(timeIntervalSince1970: seconds)
                 for resource in resources {
                     guard let type = resource["type"] as? String, let file = resource["name"] as? String else { continue }
-                    let sourcePath = String(decoding: try JSONEncoder().encode(["companion", id, type, file]), as: UTF8.self)
                     let size = (resource["size"] as? NSNumber)?.int64Value ?? 0
-                    let plan = try planner.plan(deviceID: identity, sourcePath: sourcePath, name: file,
+                    let plan = try planner.plan(deviceID: identity, name: file,
                                                 date: date, sourceSize: size)
                     if plan.adopt {
                         try inventory.reserve(plan.record, deviceName: name, originalName: file,

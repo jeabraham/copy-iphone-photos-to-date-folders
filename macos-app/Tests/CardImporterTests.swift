@@ -145,17 +145,59 @@ func cardAdoptionRegistersExistingFiles() throws {
     #expect(!FileManager.default.fileExists(atPath: target.path))
 }
 
-@Test(arguments: [false, true])
-func cardSameNameFilesAreComparedByContent(identical: Bool) throws {
+@Test
+func cardSameMetadataIsCopiedOnlyOnce() throws {
     let f = try CardFixture()
-    try f.write("DCIM/a/IMG_0001.JPG")
-    try f.write("DCIM/b/IMG_0001.JPG", bytes: identical ? [1, 2, 3, 4] : [4, 3, 2, 1])
+    let first = try f.write("DCIM/a/IMG_0001.JPG")
+    let second = URL(fileURLWithPath: f.source.location).appendingPathComponent("DCIM/b/IMG_0001.JPG")
+    try FileManager.default.createDirectory(at: second.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try FileManager.default.linkItem(at: first, to: second)
     #expect(f.run() == 0)
     let records = try f.records()
-    #expect(records.count == (identical ? 1 : 2))
-    #expect(records.reduce(0) { $0 + $1.aliases.count } == (identical ? 1 : 0))
+    #expect(records.count == 1)
+    #expect(f.messages.contains { $0.contains("Copied: 1; skipped: 1; errors: 0") })
     #expect(f.run() == 0)
     #expect(try f.records().count == records.count)
+}
+
+@Test(arguments: [false, true])
+func cardFolderChangesKeepLegacyHistory(deleted: Bool) throws {
+    let f = try CardFixture()
+    let file = try f.write("DCIM/100APPLE/IMG_0001.JPG")
+    let dcim = file.deletingLastPathComponent().deletingLastPathComponent()
+    f.source.location = dcim.path
+    try CardIdentity.create(for: dcim, uuid: f.source.id)
+    f.source.cardUUID = f.source.id
+    let date = try #require(file.resourceValues(forKeys: [.creationDateKey]).creationDate)
+    let target = try f.job.importerOptions().target(name: file.lastPathComponent, date: date)
+    let assetID = String(decoding: try JSONEncoder().encode([
+        "100APPLE/IMG_0001.JPG", String(date.timeIntervalSince1970)
+    ]), as: UTF8.self)
+    let record = PhotoRecord(deviceID: "card:\(f.source.id)", assetID: assetID,
+                             relativePath: String(target.path.dropFirst(f.destination.path.count + 1)),
+                             complete: false, savedSize: 0, originalName: file.lastPathComponent, date: date)
+    do {
+        let inventory = try PhotoInventory(destination: f.destination, readOnly: false)
+        try inventory.reserve(record, deviceName: "Card", originalName: file.lastPathComponent,
+                              date: date, sourceSize: 4, modified: nil)
+        if !deleted {
+            try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try FileManager.default.copyItem(at: file, to: target)
+        }
+        try inventory.complete(record, size: 4)
+    }
+    // Both selections find the same marker beside DCIM, but used to build different keys.
+    f.source.location = file.deletingLastPathComponent().path
+    #expect(f.run() == 0)
+    #expect(f.messages.contains { $0.contains("Copied: 0; skipped: 1; errors: 0") })
+    let moved = dcim.appendingPathComponent("101APPLE", isDirectory: true)
+    try FileManager.default.moveItem(at: file.deletingLastPathComponent(), to: moved)
+    f.source.location = dcim.path
+    #expect(f.run() == 0)
+    #expect(f.messages.contains { $0.contains("Copied: 0; skipped: 1; errors: 0") })
+    #expect(try f.records().count == 1)
+    #expect(try f.records().first?.assetID == assetID)
+    #expect(FileManager.default.fileExists(atPath: target.path) == !deleted)
 }
 
 @Test
