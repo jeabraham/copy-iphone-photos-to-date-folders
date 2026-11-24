@@ -34,8 +34,10 @@ Existing inventories are matched automatically using the filename and capture
 timestamp already stored in each record. Old IDs, aliases, completion history and
 assigned paths are retained; no reimport or separate migration command is needed.
 This also recognizes completed imports whose saved files have been deleted. If
-multiple historical records have the same new key, the importer reports the conflict
-without choosing a copy, deleting files, or discarding history.
+multiple historical records have the same new key, the importer reports an error and
+skips that photo while continuing with other photos, without choosing a copy, deleting
+files, or discarding history. The import finishes with an error status so the conflict
+can be investigated.
 
 For genuinely new source identities, a completed download is compared byte-for-byte with
 previously imported files of the same name and size from the same phone. Identical

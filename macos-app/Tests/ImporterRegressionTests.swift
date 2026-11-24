@@ -213,7 +213,8 @@ func historicalConflictsPreserveBothCopiesAndReportAmbiguity() throws {
         try inventory.complete(plan.record, size: 4)
     }
     let planner = try PhotoPlanner(options: f.options, records: inventory.records())
-    #expect(throws: ImportError.self) { try f.plan(planner) }
+    #expect(throws: HistoricalImportConflict.self) { try f.plan(planner) }
+    #expect(try !planner.plan(deviceID: "phone-A", name: "IMG_3908.HEIC", date: f.date).skip)
     #expect(try inventory.records().count == 2)
     #expect(try Data(contentsOf: first.target) == Data([1, 2, 3, 4]))
     #expect(try Data(contentsOf: second.target) == Data([4, 3, 2, 1]))

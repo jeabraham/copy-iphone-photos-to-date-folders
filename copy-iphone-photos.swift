@@ -31,6 +31,13 @@ struct ImportError: LocalizedError {
     var errorDescription: String? { message }
 }
 
+struct HistoricalImportConflict: LocalizedError {
+    let name: String
+    var errorDescription: String? {
+        "Multiple historical imports match the source, filename and timestamp for \(name). Skipping this photo; existing files and history have been preserved."
+    }
+}
+
 struct Options {
     var destination = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     var start: Date?
@@ -421,7 +428,7 @@ final class PhotoPlanner {
         _ = try options.target(name: name, date: date)
         let identity = try key(deviceID: deviceID, assetID: assetID)
         guard !ambiguous.contains(identity) else {
-            throw ImportError(message: "Multiple historical imports match the source, filename and timestamp for \(name). Existing files and history have been preserved; resolve the conflicting inventory entries before importing this photo.")
+            throw HistoricalImportConflict(name: name)
         }
         let storedAssetID = known[identity]?.assetID ?? assetID
         if let record = known[identity] {
@@ -673,8 +680,15 @@ final class Importer: NSObject, ICDeviceBrowserDelegate, ICCameraDeviceDelegate 
                 let movie = type?.conforms(to: .movie) == true
                 guard type?.conforms(to: .image) == true || movie else { continue }
                 if options.excludeMovies && movie { continue }
-                let plan = try planner.plan(deviceID: identity, name: name,
+                let plan: PhotoPlan
+                do {
+                    plan = try planner.plan(deviceID: identity, name: name,
                                             date: date, sourceSize: Int64(file.fileSize))
+                } catch let conflict as HistoricalImportConflict {
+                    failures += 1
+                    importerErrorSink(conflict.localizedDescription)
+                    continue
+                }
                 if plan.skip {
                     if plan.adopt {
                         try inventory.reserve(plan.record, deviceName: device.name ?? "camera", originalName: name,
@@ -1013,8 +1027,15 @@ final class CompanionImporter {
                 for resource in resources {
                     guard let type = resource["type"] as? String, let file = resource["name"] as? String else { continue }
                     let size = (resource["size"] as? NSNumber)?.int64Value ?? 0
-                    let plan = try planner.plan(deviceID: identity, name: file,
+                    let plan: PhotoPlan
+                    do {
+                        plan = try planner.plan(deviceID: identity, name: file,
                                                 date: date, sourceSize: size)
+                    } catch let conflict as HistoricalImportConflict {
+                        failures += 1
+                        importerErrorSink(conflict.localizedDescription)
+                        continue
+                    }
                     if plan.adopt {
                         try inventory.reserve(plan.record, deviceName: name, originalName: file,
                                               date: date, sourceSize: size, modified: nil)

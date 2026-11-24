@@ -160,6 +160,45 @@ func cardSameMetadataIsCopiedOnlyOnce() throws {
     #expect(try f.records().count == records.count)
 }
 
+@Test(arguments: [false, true], [false, true])
+func cardHistoricalConflictDoesNotStopOtherPhotos(dryRun: Bool, overwrite: Bool) throws {
+    let f = try CardFixture()
+    let conflicting = try f.write()
+    let other = try f.write("DCIM/IMG_0002.JPG", bytes: [5, 6, 7, 8])
+    let date = try #require(conflicting.resourceValues(forKeys: [.creationDateKey]).creationDate)
+    let inventory = try PhotoInventory(destination: f.destination, readOnly: false)
+    var originals: [(URL, Data)] = []
+    for (index, bytes) in [(1, Data([1, 2, 3, 4])), (2, Data([4, 3, 2, 1]))] {
+        let target = try f.job.importerOptions().target(name: "old\(index).JPG", date: date)
+        let assetID = String(decoding: try JSONEncoder().encode([
+            "DCIM/\(index)/IMG_0001.JPG", String(date.timeIntervalSince1970)
+        ]), as: UTF8.self)
+        let record = PhotoRecord(deviceID: "card:\(f.source.id)", assetID: assetID,
+                                 relativePath: String(target.path.dropFirst(f.destination.path.count + 1)),
+                                 complete: false, savedSize: 0, originalName: conflicting.lastPathComponent, date: date)
+        try inventory.reserve(record, deviceName: "Card", originalName: record.originalName,
+                              date: date, sourceSize: 4, modified: nil)
+        try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try bytes.write(to: target)
+        try inventory.complete(record, size: 4)
+        originals.append((target, bytes))
+    }
+    f.settings.dryRun = dryRun
+    f.settings.overwrite = overwrite
+    #expect(f.run() == 1)
+    #expect(f.messages.contains { $0.contains("Multiple historical imports match") && $0.contains("Skipping this photo") })
+    #expect(f.messages.contains { $0.contains("errors: 1") })
+    #expect(f.messages.contains { $0.contains(dryRun ? "Would copy" : "Copied:") && $0.contains("IMG_0002.JPG") })
+    #expect(try f.records().count == (dryRun ? 2 : 3))
+    for (target, bytes) in originals {
+        #expect(try Data(contentsOf: target) == bytes)
+    }
+    if !dryRun {
+        let record = try #require(f.records().first { $0.originalName == other.lastPathComponent })
+        #expect(try Data(contentsOf: f.target(record)) == Data(contentsOf: other))
+    }
+}
+
 @Test(arguments: [false, true])
 func cardFolderChangesKeepLegacyHistory(deleted: Bool) throws {
     let f = try CardFixture()
