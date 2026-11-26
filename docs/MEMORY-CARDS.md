@@ -28,8 +28,11 @@ cards can reuse their saved row and history.
 Existing rows created before this feature ask **Same Card** or **New Card** when
 first checked. Choose Same Card only if the card has not been formatted or replaced.
 Choosing a folder other than `DCIM` produces a warning and an option to return to
-the folder picker. Keep the same source folder level: file identities also include
-the relative path and filesystem creation timestamp.
+the folder picker. Photo identity uses the card UUID, original filename and filesystem
+creation timestamp (whole seconds), not the relative folder path. Selecting a different
+folder level or moving a file within the same card retains its history as long as
+the filename and creation timestamp are unchanged. Copies or reformats can change
+filesystem timestamps.
 
 Normal repeat card imports check the inventory and destination file metadata without
 copying or comparing RAW contents again. A new source identity may require a full

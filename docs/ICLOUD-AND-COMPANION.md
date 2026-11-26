@@ -84,10 +84,16 @@ Once Photo Import Companion is installed on your iPhone:
    to add the destination photos to your Lightroom Classic catalog.
 
 The Mac app shows import progress and uses the same destination inventory for
-both iPhone import modes. Switching modes may download a previously imported photo
-once to verify identical content and record its alternate identity; see
-[Inventory and duplicate handling](INVENTORY.md). The companion exports original
-resources, not edited renditions.
+both iPhone import modes. Matching phone ID, original filename and capture timestamp
+(whole seconds) lets either mode skip a previously imported photo **before fetching
+it**, including iCloud originals and photos deleted from the destination. Existing
+inventory records are recognized automatically; see
+[Inventory and duplicate handling](INVENTORY.md). Listing companion metadata does not
+fetch originals. A resource with different metadata is considered new and fetching
+it can still use cellular data; prefer Wi-Fi for iCloud imports. The companion exports
+original resources, not edited renditions, so matching metadata across modes does not
+prove that a previous direct import saved the original rendition. Use an explicit
+overwrite when you intend to refresh a recorded file with the companion's original.
 
 ### Build the companion yourself and use the command line
 

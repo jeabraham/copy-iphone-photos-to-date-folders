@@ -3,7 +3,7 @@
 # Inventory and duplicate handling
 
 Use the **same `--dest` for every phone**. The importer stores devices, original
-filenames, source paths, creation/modification dates, source sizes, and saved paths
+filenames, creation/modification dates, source sizes, and saved paths
 in `DEST/.iphone-import.sqlite3`, using macOS's built-in SQLite library.
 Device identity uses the serial number exposed by ImageCaptureCore, not the
 phone's display name or a session-specific PTP handle. If no serial is available,
@@ -12,8 +12,16 @@ on every import from that phone. An explicit label overrides the serial, so
 switching identity schemes later causes the phone to be treated as a new device.
 Renaming a phone does not change its serial-based identity.
 
-A source file is identified by its device, full catalog path, and full creation
-timestamp, not just its filename and day. A successful recorded import is skipped
+A source file is identified by its **phone/card ID, original filename, and creation
+date/time**, at whole-second precision (fractional seconds are discarded).
+Phone imports use the capture timestamp supplied by the catalog; card imports use
+the filesystem creation timestamp. Timestamps are compared as UTC instants, not
+formatted local dates. Source folders and PhotoKit identifiers are not part of the
+key, so switching phone import modes or selecting another folder level on the same
+card does not change a photo's identity when these metadata agree. Metadata matching
+deliberately treats two files from the same source with the same original filename
+and timestamp as one photo; it does not verify their bytes or detect source edits.
+A successful recorded import is skipped
 **before downloading** if its saved file still exists with the recorded byte
 size. Successfully imported files that you delete locally stay deleted by default,
 even with `--overwrite`. Use `--redownload-deleted-files` (or **Redownload deleted
@@ -22,15 +30,26 @@ interrupted imports still retry. Changed/unreadable saved files are reported;
 use `--overwrite` to refresh them. This initial check uses metadata, so same-size
 external changes are not detected.
 
-For new source identities, a completed download is compared byte-for-byte with
+Existing inventories are matched automatically using the filename and capture
+timestamp already stored in each record. Old IDs, aliases, completion history and
+assigned paths are retained; no reimport or separate migration command is needed.
+This also recognizes completed imports whose saved files have been deleted. If
+multiple historical records have the same new key, the importer reports an error and
+skips that photo while continuing with other photos, without choosing a copy, deleting
+files, or discarding history. The import finishes with an error status so the conflict
+can be investigated.
+
+For genuinely new source identities, a completed download is compared byte-for-byte with
 previously imported files of the same name and size from the same phone. Identical
 content is stored once, with both source identities recorded as aliases. This
-handles duplicate DCIM entries and switching between direct and companion imports.
-Different phones retain separate copies; different bytes are never merged. Existing
+handles byte-identical copies with different timestamps. Switching between direct
+and companion imports with matching metadata skips before downloading, even when
+the companion does not know the source size.
+Different phones retain separate copies. Existing
 duplicate files are not removed. Overwrite bypasses this content matching.
 The first encounter still transfers the bytes to verify them; dry runs cannot
 predict this reduction because they do not download media.
-Duplicate indistinguishable catalog entries are reported rather than silently merged.
+Repeated catalog entries with the same metadata key are scheduled only once.
 
 The first asset normally keeps `IMG_1234.HEIC`. A different asset or phone whose
 name clashes gets `IMG_1234__<device-token>.HEIC`, with an additional number if

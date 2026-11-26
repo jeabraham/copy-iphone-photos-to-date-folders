@@ -89,11 +89,8 @@ enum CardImporter {
                     continue
                 }
                 guard options.includes(date) else { continue }
-                // Enumeration may expand /var to /private/var; use depth rather than
-                // subtracting an absolute path prefix to keep identity independent of mount location.
-                let relativePath = file.pathComponents.suffix(walker.level).joined(separator: "/")
                 let size = Int64(values.fileSize ?? 0)
-                let plan = try planner.plan(deviceID: identity, sourcePath: relativePath, name: name,
+                let plan = try planner.plan(deviceID: identity, name: name,
                                             date: date, sourceSize: size)
                 if plan.adopt {
                     try inventory.reserve(plan.record, deviceName: job.source.label, originalName: name,
